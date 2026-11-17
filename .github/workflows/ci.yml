@@ -55,6 +55,8 @@ jobs:
           (! grep -rnE 'tokio::runtime|Handle::current|block_on|spawn_blocking' src --include='*.rs')
           # A library hands output to its caller. It never prints.
           (! grep -rnE '\b(e?print(ln)?!|io::std(out|err)\(\))' src --include='*.rs')
+          # Rust source has no plain comments: only ///, //! and the rule-8 marker (CONTRIBUTING.md No plain comments).
+          (! grep -rnE '(^|[[:space:]])(//(//+|[^/!]|$)|/\*)' src tests --include='*.rs' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(pub(\([^)]*\))? )?((const|async|unsafe) )*(struct|enum|trait|type|union|fn) .*// repeats module: .')
           # Naming rule 8: in each Rust file this change touches, no type, trait or function name starts
           # or ends with its module's name, unless it is that name (query::Query).
           for f in $(git diff --name-only --diff-filter=d HEAD^ HEAD -- '*.rs'); do

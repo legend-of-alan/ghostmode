@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 const ITEM_KEYWORDS: &[&str] = &[
     "fn", "struct", "enum", "trait", "type", "const", "static", "mod",
 ];
+const MANIFEST_KEYWORDS: &[&str] = &["name"];
 
 #[test]
 fn named_code_exists() {
@@ -27,9 +28,8 @@ fn named_code_exists() {
                 .iter()
                 .map(|part| part.to_string_lossy().trim_end_matches(".rs").to_string()),
         );
-        // `name = "ghostmode"` in Cargo.toml declares the crate `ghostmode`.
         let keywords = if path.ends_with("Cargo.toml") {
-            &["name"][..]
+            MANIFEST_KEYWORDS
         } else {
             ITEM_KEYWORDS
         };

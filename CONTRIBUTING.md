@@ -14,7 +14,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
-CI also fails on a runtime call or a print in `src`, a touched name that breaks Naming rule 8, and a dependency without a permissive license. Pull requests only run CI on Linux. Pushes to main also run it on macOS and Windows.
+CI also fails on a runtime call or a print in `src`, a plain comment in `src` or `tests`, a touched name that breaks Naming rule 8, and a dependency without a permissive license. Pull requests only run CI on Linux. Pushes to main also run it on macOS and Windows.
 
 ## Issues and PRs
 
@@ -33,6 +33,7 @@ Every issue gets a priority label from `P0` (most urgent) to `P3` (low). It also
 - **Fix the cause.** When something fails, find out why. Don't paper over it with sleeps, retries or longer timeouts.
 - **Test first.** Write the test that shows what a caller sees, then the code. Tests check behavior, not how the code does it, so a refactor shouldn't break them.
 - **Test it once.** Each behavior gets one test, at the layer where a caller sees it. [Testing](#testing) lists what that rules out.
+- **No plain comments.** Rust source has no `//` or `/* */` comments, except the `// repeats module: <reason>` marker from Naming rule 8. Doc comments (`///` and `//!`) say what an item does and what it guarantees its callers, never why a workaround exists or why odd behavior is fine. If code needs explaining, fix the code.
 - **Bring no runtime.** The core returns plain futures, and the caller picks Tokio, smol or a blocking executor. It never builds, enters or blocks on a runtime.
 - **The caller owns output.** Library code never prints. It hands results and errors back to its caller, and nothing it logs carries a secret, a prompt or a script's data.
 
