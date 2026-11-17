@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Lets a branch run the full matrix by hand: gh workflow run CI --ref <branch>
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # PRs share one group per branch, so a new push cancels the old run.
+  # Each push to main gets its own group (by sha), so every main commit runs to completion.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS and Windows minutes cost more than Linux, so PRs run Linux only.
+        # Every push to main still runs all three.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+    steps:
+      - name: Keep checkout line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # HEAD^ is the base: the PR's merge commit's first parent, or main before a squash merge.
+          fetch-depth: 2
+
+      - run: rustup toolchain install && rustc --version
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: guardrails
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # The core returns plain futures and the caller picks the runtime: it never builds, enters or blocks on one.
+          (! grep -rnE 'tokio::runtime|Handle::current|block_on|spawn_blocking' src --include='*.rs')
+          # A library hands output to its caller. It never prints.
+          (! grep -rnE '\b(e?print(ln)?!|io::std(out|err)\(\))' src --include='*.rs')
+          # Naming rule 8: in each Rust file this change touches, no type, trait or function name starts
+          # or ends with its module's name, unless it is that name (query::Query).
+          for f in $(git diff --name-only --diff-filter=d HEAD^ HEAD -- '*.rs'); do
+            m=$(basename "$f" .rs); [ "$m" = mod ] && m=$(basename "$(dirname "$f")")
+            [[ $m =~ ^(lib|main|build)$ ]] && continue
+            awk -v m="$m" -v M="$(sed -E 's/(^|_)(.)/\U\2/g' <<< "$m")" '!/\/\/ repeats module: ./ &&
+              match($0, /^(pub(\([^)]*\))? )?((const|async|unsafe) )*(struct|enum|trait|type|union|fn) [A-Za-z0-9_]+/) {
+                n = substr($0, 1, RLENGTH); sub(/.* /, "", n); snake = n ~ /^[a-z]/; w = snake ? m : M
+                if (n != w && (n ~ ("^" w (snake ? "_" : "[A-Z_]")) || n ~ ((snake ? "_" : "") w "$"))) { print FILENAME ":" FNR ": " n " repeats its module " m; bad = 1 }
+              } END { exit bad }' "$f" || repeats=1
+          done
+          [ -z "$repeats" ] || { echo "Rename each one, or end its line with '// repeats module: <reason>' (CONTRIBUTING.md Naming rule 8)."; exit 1; }
+          # ghostmode is MIT: every AND term of every license in its tree must offer a permissive choice.
+          cargo tree -e normal --locked --target all --prefix none --no-dedupe --format '{l}' | sort -u | awk '
+            { terms = $0; gsub(/[()]/, "", terms); gsub(/ *\/ */, " OR ", terms)
+              n = split(terms, ands, / AND /)
+              for (i = 1; i <= n; i++) {
+                free = 0; m = split(ands[i], ors, / OR /)
+                for (j = 1; j <= m; j++) if (ors[j] ~ /^ *(MIT|Apache-2\.0( WITH LLVM-exception)?|Unlicense|Unicode-3\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0) *$/) free = 1
+                if (!free) { print $0; bad = 1 }
+              }
+            }
+            END { exit bad }'
+
+      - name: test
+        run: cargo test --locked
