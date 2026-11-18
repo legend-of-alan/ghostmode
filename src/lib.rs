@@ -1,1 +1,10 @@
-//! Name reservation. The real release is coming; see the repository.
+//! Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and
+//! the host provides the tools the script calls. The model sees two tools, `execute` and `poll`.
+
+pub mod host;
+mod repl;
+mod sandbox;
+pub mod tool;
+mod value;
+
+pub use sandbox::{Builder, Sandbox};
