@@ -19,7 +19,7 @@ pub trait Host {
 /// A tool the host provides. A script calls it by its id, with keyword arguments.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
-    /// The name a script calls the tool by.
+    /// The id a script calls the tool by, as a Python function.
     pub id: String,
     /// What the tool does, for the model.
     pub description: String,

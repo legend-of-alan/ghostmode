@@ -50,8 +50,9 @@ impl<H: Host> Sandbox<H> {
         }
     }
 
-    /// Runs `code` for up to the execute wait. A script that fails is a `failed` status, as is
-    /// a request while another run is still running.
+    /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
+    /// time spent waiting on the host, not the script's own running time. A script that fails
+    /// is a `failed` status, as is a request while another run is still running.
     pub async fn execute(&mut self, code: &str) -> tool::Status {
         let span = tracing::info_span!(
             "execute",

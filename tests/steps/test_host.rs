@@ -25,8 +25,9 @@ pub(crate) enum Answer {
 pub(crate) struct TestHost {
     /// Each tool's answer, by tool id.
     pub(crate) answers: HashMap<String, Answer>,
-    /// The sending halves that answer `Answer::Held` calls, from a When step to the call's future.
-    pub(crate) held_calls: Arc<Mutex<Vec<oneshot::Sender<Value>>>>,
+    /// The sending halves that answer `Answer::Held` calls by tool id, from a When step to the
+    /// call's future.
+    pub(crate) held_calls: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
 }
 
 impl Host for TestHost {
@@ -48,7 +49,8 @@ impl Host for TestHost {
             Answer::Failed(message) => future::ready(Err(host::Error::Failed(message))).boxed(),
             Answer::Held => {
                 let (sender, receiver) = oneshot::channel();
-                self.held_calls.lock().expect("held calls").push(sender);
+                let held_calls = &mut self.held_calls.lock().expect("held calls");
+                held_calls.insert(call.tool_id.clone(), sender);
                 receiver
                     .map(|answer| answer.map_err(|_| host::Error::Failed("dropped".into())))
                     .boxed()
@@ -64,8 +66,10 @@ pub(crate) fn parse_json(text: &str) -> Value {
 
 #[given(regex = r#"^a host whose `(\w+)` answers ([\[{"].*)$"#)]
 fn host_answers(world: &mut World, tool_id: String, answer: String) {
-    let value = Answer::Value(parse_json(&answer));
-    world.host.answers.insert(tool_id, value);
+    world
+        .host
+        .answers
+        .insert(tool_id, Answer::Value(parse_json(&answer)));
 }
 
 #[given(regex = r#"^a host that refuses `(\w+)` with "(.*)"$"#)]
@@ -90,9 +94,14 @@ fn sandbox_waits(world: &mut World, execute_ms: u64, poll_ms: u64) {
 }
 
 #[when(regex = r"^`(\w+)` answers (.+)$")]
-fn held_call_answers(world: &mut World, _tool_id: String, answer: String) {
-    let sender = world.host.held_calls.lock().expect("held calls").pop();
-    let sender = sender.expect("a call waiting for its answer");
+fn held_call_answers(world: &mut World, tool_id: String, answer: String) {
+    let sender = world
+        .host
+        .held_calls
+        .lock()
+        .expect("held calls")
+        .remove(&tool_id);
+    let sender = sender.unwrap_or_else(|| panic!("no {tool_id} call waits for its answer"));
     sender
         .send(parse_json(&answer))
         .expect("the run still waits");
