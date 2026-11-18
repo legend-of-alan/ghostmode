@@ -4,21 +4,20 @@ use std::time::{Duration, Instant};
 
 use futures_timer::Delay;
 use futures_util::future::{self, BoxFuture, Either, FutureExt};
+use serde::Serialize;
 use serde_json::Value;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::host::{self, Host};
 use crate::repl::{MontyRepl, Progress, Repl, ReplFunctionCall};
-use crate::tool;
 
 /// One Python session that runs the model's scripts, and the host whose tools they call.
 /// Globals persist from one `execute` to the next, and one run is in flight at a time.
 pub struct Sandbox<H> {
     host: H,
     repl: Repl,
-    idle_session: Option<Box<MontyRepl>>,
-    run: Option<Run>,
+    state: Option<State>,
     last_run_id: u64,
     execute_wait: Duration,
     poll_wait: Duration,
@@ -29,6 +28,36 @@ pub struct Builder<H> {
     host: H,
     execute_wait: Duration,
     poll_wait: Duration,
+}
+
+/// What `execute` or `poll` answers, from the sandbox to the model. It serializes as the JSON
+/// the model sees, such as `{"status": "running", "run_id": 1}`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum Status {
+    /// The script ended, and this is the value of its last expression.
+    Finished {
+        /// The value as JSON.
+        value: Value,
+    },
+    /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
+    Running {
+        /// The id to poll.
+        run_id: u64,
+    },
+    /// The script or the request failed.
+    Failed {
+        /// What went wrong, such as the script's traceback.
+        error: String,
+        /// The tool calls the host answered before the failure.
+        calls: Vec<host::Call>,
+    },
+}
+
+/// Where the sandbox's session is: idle between scripts, or held by a suspended run.
+enum State {
+    Idle(Box<MontyRepl>),
+    Suspended(Run),
 }
 
 /// A script suspended at a tool call the host has not answered yet.
@@ -53,7 +82,7 @@ impl<H: Host> Sandbox<H> {
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
     /// time spent waiting on the host, not the script's own running time. A script that fails
     /// is a `failed` status, as is a request while another run is still running.
-    pub async fn execute(&mut self, code: &str) -> tool::Status {
+    pub async fn execute(&mut self, code: &str) -> Status {
         let span = tracing::info_span!(
             "execute",
             run_id = Empty,
@@ -63,12 +92,16 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            let Some(session) = self.idle_session.take() else {
-                let error = format!("run {} is still running", self.last_run_id);
-                return tool::Status::Failed {
-                    error,
-                    calls: Vec::new(),
-                };
+            let session = match self.state.take() {
+                Some(State::Idle(session)) => session,
+                suspended => {
+                    self.state = suspended;
+                    let error = format!("run {} is still running", self.last_run_id);
+                    return Status::Failed {
+                        error,
+                        calls: Vec::new(),
+                    };
+                }
             };
             self.last_run_id += 1;
             let id = self.last_run_id;
@@ -86,12 +119,12 @@ impl<H: Host> Sandbox<H> {
         }
         .instrument(span.clone())
         .await;
-        record_status(&span, &status, started);
+        record_end(&span, status.as_str(), started);
         status
     }
 
     /// Waits up to the poll wait for the run with `run_id` that `execute` left running.
-    pub async fn poll(&mut self, run_id: u64) -> tool::Status {
+    pub async fn poll(&mut self, run_id: u64) -> Status {
         let span = tracing::info_span!(
             "poll",
             run_id,
@@ -101,11 +134,11 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            if self.run.as_ref().is_some_and(|run| run.id == run_id) {
+            if matches!(&self.state, Some(State::Suspended(run)) if run.id == run_id) {
                 self.wait_timeout(self.poll_wait).await
             } else {
                 let error = format!("no run {run_id}");
-                tool::Status::Failed {
+                Status::Failed {
                     error,
                     calls: Vec::new(),
                 }
@@ -113,23 +146,28 @@ impl<H: Host> Sandbox<H> {
         }
         .instrument(span.clone())
         .await;
-        record_status(&span, &status, started);
+        record_end(&span, status.as_str(), started);
         status
     }
 
     /// Waits up to `wait` for the suspended run, answering its tool calls as the host answers
     /// them. The run stays suspended in the sandbox while it waits, so dropping this future
     /// loses nothing.
-    async fn wait_timeout(&mut self, wait: Duration) -> tool::Status {
+    async fn wait_timeout(&mut self, wait: Duration) -> Status {
         let mut timer = Delay::new(wait);
         loop {
-            let run = self.run.as_mut().expect("a suspended run");
+            let Some(State::Suspended(run)) = &mut self.state else {
+                panic!("wait_timeout without a suspended run");
+            };
             let answer = match future::select(&mut run.answer, &mut timer).await {
                 Either::Left((answer, _)) => answer,
                 Either::Right(_) => {
                     Span::current().record("call_count", run.answered_calls.len());
-                    return tool::Status::Running { run_id: run.id };
+                    return Status::Running { run_id: run.id };
                 }
+            };
+            let Some(State::Suspended(run)) = self.state.take() else {
+                panic!("wait_timeout without a suspended run");
             };
             let Run {
                 id,
@@ -137,7 +175,7 @@ impl<H: Host> Sandbox<H> {
                 call,
                 function_call,
                 ..
-            } = self.run.take().expect("a suspended run");
+            } = run;
             answered_calls.push(call);
             Span::current().record("call_count", answered_calls.len());
             match self.repl.resume(function_call, answer) {
@@ -161,13 +199,13 @@ impl<H: Host> Sandbox<H> {
         function_call: Box<ReplFunctionCall>,
     ) {
         let answer = self.call_host(&call);
-        self.run = Some(Run {
+        self.state = Some(State::Suspended(Run {
             id,
             answered_calls,
             call,
             function_call,
             answer,
-        });
+        }));
     }
 
     /// Ends the run: `session` is idle again, and the script's result becomes the status.
@@ -176,11 +214,11 @@ impl<H: Host> Sandbox<H> {
         session: Box<MontyRepl>,
         result: Result<Value, String>,
         answered_calls: Vec<host::Call>,
-    ) -> tool::Status {
-        self.idle_session = Some(session);
+    ) -> Status {
+        self.state = Some(State::Idle(session));
         match result {
-            Ok(value) => tool::Status::Finished { value },
-            Err(error) => tool::Status::Failed {
+            Ok(value) => Status::Finished { value },
+            Err(error) => Status::Failed {
                 error,
                 calls: answered_calls,
             },
@@ -199,9 +237,7 @@ impl<H: Host> Sandbox<H> {
                 Err(host::Error::Refused(_)) => "refused",
                 Err(host::Error::Failed(_)) => "failed",
             };
-            let span = Span::current();
-            span.record("status", status);
-            span.record("duration", field::debug(started.elapsed()));
+            record_end(&Span::current(), status, started);
             answer
         }
         .instrument(span)
@@ -229,8 +265,7 @@ impl<H: Host> Builder<H> {
         Sandbox {
             host: self.host,
             repl: Repl::new(tool_ids),
-            idle_session: Some(Repl::new_session()),
-            run: None,
+            state: Some(State::Idle(Repl::new_session())),
             last_run_id: 0,
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
@@ -238,13 +273,19 @@ impl<H: Host> Builder<H> {
     }
 }
 
-/// Records a tool call's status and how long it took on its span.
-fn record_status(span: &Span, status: &tool::Status, started: Instant) {
-    let status = match status {
-        tool::Status::Finished { .. } => "finished",
-        tool::Status::Running { .. } => "running",
-        tool::Status::Failed { .. } => "failed",
-    };
+impl Status {
+    /// The status's `status` tag in the model's JSON, such as `"running"`.
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Finished { .. } => "finished",
+            Self::Running { .. } => "running",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+/// Records on `span` the status a traced step ended with and how long it took since `started`.
+fn record_end(span: &Span, status: &'static str, started: Instant) {
     span.record("status", status);
     span.record("duration", field::debug(started.elapsed()));
 }

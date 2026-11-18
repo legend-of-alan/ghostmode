@@ -110,7 +110,7 @@ impl Repl {
                         function_call.resume(ExtFunctionResult::Error(error), PrintWriter::Disabled)
                     } else {
                         let args = function_call.args.kwargs().map(|(key, value)| {
-                            let key = key.as_str().unwrap_or_default().to_string();
+                            let key = key.as_str().expect("kwargs keys are str").to_string();
                             (key, value::to_json(value))
                         });
                         let args = args.collect();
