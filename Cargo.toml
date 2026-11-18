@@ -27,6 +27,10 @@ name = "features"
 path = "tests/features.rs"
 harness = false
 
+[[bench]]
+name = "host_call"
+harness = false
+
 # CI builds with -D warnings, so these fail the build.
 [lints.rust]
 missing_docs = "warn"
