@@ -26,7 +26,7 @@ Every issue gets a priority label from `P0` (most urgent) to `P3` (low). It also
 
 ## Design principles
 
-- **Keep it simple.** The best fix is often deleting code, not adding it. Before you write something new, check whether you can remove, reuse or derive what you need from what's already there. Build only as much as the job needs. CI shows a `Net: +N production, +M tests` notice on its check run for the lines it adds or removes (files under a `tests/` directory count as tests). If it grows the code, say why in the PR body.
+- **Keep it simple.** The best fix is often deleting code, not adding it. Before you write something new, check whether you can remove, reuse or derive what you need from what's already there. Build only as much as the job needs. CI shows a `Net: +N production, +M tests` notice on its check run for the lines it adds or removes (files under a `tests/` directory count as tests, and `Cargo.lock`, which is generated, is not counted). If it grows the code, say why in the PR body.
 - **Say it once.** Each message, rule, check or format should live in one place. If you find the same thing in two places, merge them instead of adding a flag to keep them in sync.
 - **No side doors.** Tests should use the same public API a caller uses. If a test needs a shortcut, fix the test or the design.
 - **Use the words people already know.** Good code reads the way people expect, so it needs no tutorial. Names follow [Naming](#naming) below.
@@ -35,18 +35,20 @@ Every issue gets a priority label from `P0` (most urgent) to `P3` (low). It also
 - **Test it once.** Each behavior gets one test, at the layer where a caller sees it. [Testing](#testing) lists what that rules out.
 - **No plain comments.** Rust source has no `//` or `/* */` comments, except the `// repeats module: <reason>` marker from Naming rule 8. Doc comments (`///` and `//!`) say what an item does and what it guarantees its callers, never why a workaround exists or why odd behavior is fine. If code needs explaining, fix the code.
 - **Bring no runtime.** The core returns plain futures, and the caller picks Tokio, smol or a blocking executor. It never builds, enters or blocks on a runtime.
-- **The caller owns output.** Library code never prints. It hands results and errors back to its caller, and nothing it logs carries a secret, a prompt or a script's data.
+- **The caller owns output.** Library code never prints. It hands results and errors back to its caller, and nothing it logs carries a secret, a prompt or a script's data. The crate records `tracing` spans with ids, statuses, durations and counts only, and never installs a subscriber.
 
 ## Testing
 
-A test earns its place by failing when something a caller would notice changes. Check a new test against this list before you add it.
+Behavior is tested with cucumber scenarios. Feature files live in `tests/features/<area>/`, shared Given/When/Then steps live in `tests/steps/`, and `tests/features.rs` holds the one `World` and runs the whole tree once per executor. Run one scenario with `cargo test --test features -- --name "<regex>"`. A plain `#[test]` is only for what a scenario can't express, such as `tests/doc_code_names.rs`.
 
-- **Extend, don't duplicate.** If a test already shows the behavior, extend or rename it instead of adding another. One test can cover several acceptance criteria, so you don't need one per item.
-- **Don't guard the past.** Don't test that a removed flag, field or behavior stays gone, and don't re-run a fixed bug's old steps to prove it stays fixed. The test for the new behavior already fails if the old code comes back.
-- **Leave other tests alone.** Don't add setup or checks to a test about something else just to re-test your change. Extend the test whose subject is your change.
-- **Assert what callers see.** Check return values, errors and what a script can observe. Don't check private fields, call counts or the order of internal steps when a visible outcome already shows the result. A refactor that keeps behavior should break no test.
-- **Unit tests only where the public API can't reach.** A parser edge case is a good one. A parser test for an argument that doesn't exist is not.
-- **Name it for what it proves.** A test's name says what its assertions check. If they disagree, fix one of them.
+A scenario earns its place by failing when something a caller would notice changes. Check a new scenario against this list before you add it.
+
+- **Extend, don't duplicate.** If a scenario already shows the behavior, extend or rename it instead of adding another. One scenario can cover several acceptance criteria, so you don't need one per item.
+- **Don't guard the past.** Don't test that a removed flag, field or behavior stays gone, and don't re-run a fixed bug's old steps to prove it stays fixed. The scenario for the new behavior already fails if the old code comes back.
+- **Leave other scenarios alone.** Don't add setup or checks to a scenario about something else just to re-test your change. Extend the scenario whose subject is your change.
+- **Assert what callers see.** Check return values, errors and what a script can observe. Don't check private fields, call counts or the order of internal steps when a visible outcome already shows the result. A refactor that keeps behavior should break no scenario.
+- **Plain tests only where a scenario can't reach.** A parser edge case is a good one. A parser test for an argument that doesn't exist is not.
+- **Name it for what it proves.** A scenario's name says what its steps check. If they disagree, fix one of them.
 
 ## Naming
 
@@ -60,7 +62,7 @@ Default to the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/
 3. Borrow words from Rust, std, the crates we use and this codebase before inventing new ones. If std says `try_lock`, say that.
 4. No vague words. A name says what the thing shows, sends, reads or refuses.
 5. Two names that look alike must do alike jobs.
-6. Use the README's words in the README's sense. The model writes a script, ghostmode runs it in a sandbox, and the functions you expose inside it are host functions.
+6. Use the README's words in the README's sense. The model writes a script, ghostmode runs it in a sandbox, and the host provides the tools the script calls.
 7. A type that carries messages between layers, such as a request, reply, event or channel half, says in its doc comment which two layers it connects. Similar names get that comment, not a rename.
 8. Don't repeat the module name inside a name. A name that is the module name, such as `query::Query`, is fine. CI checks the files a PR touches; a name kept on purpose, under rule 15 or as a pair, ends its line with `// repeats module: <reason>`.
 9. A comment shouldn't have to explain a name. If it does, fix the name.

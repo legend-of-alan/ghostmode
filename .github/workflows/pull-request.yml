@@ -46,8 +46,10 @@ jobs:
               echo "::error::The title should be: $want"; failed=1
             fi
           fi
-          # Files under a tests/ directory count as tests, everything else as production.
+          # Files under a tests/ directory count as tests, Cargo.lock is generated and not counted,
+          # and everything else counts as production.
           net=$(git diff --numstat "$BASE...HEAD" | awk -F '\t' '
+            $3 == "Cargo.lock" { next }
             { if ($3 ~ /(^|\/)tests\//) t += $1 - $2; else p += $1 - $2 }
             END { printf "Net: %+d production, %+d tests", p, t }')
           echo "::notice::$net"
