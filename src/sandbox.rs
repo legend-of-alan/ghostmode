@@ -21,6 +21,7 @@ pub struct Sandbox<H> {
     last_run_id: u64,
     execute_wait: Duration,
     poll_wait: Duration,
+    limits: Limits,
 }
 
 /// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`].
@@ -28,6 +29,30 @@ pub struct Builder<H> {
     host: H,
     execute_wait: Duration,
     poll_wait: Duration,
+    limits: Limits,
+}
+
+/// What a script may use before the sandbox stops it with a `failed` status. A stopped script
+/// leaves the session's globals as it had set them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// How long the script itself may run, summed over `execute` and every `poll` of its run
+    /// and not counting time spent waiting on the host. The default is 30 s.
+    pub run_time: Duration,
+    /// The most memory the script may use. In-process this refuses only a single allocation
+    /// over the limit, such as one huge string, with `MemoryError`. The default is 256 MiB.
+    pub memory_bytes: usize,
+    /// How deep the script's calls may nest before it raises `RecursionError`. The default is
+    /// 1,000.
+    pub recursion_depth: usize,
+    /// How many tool calls the script of one `execute` may make, over all its polls. The
+    /// default is 100.
+    pub calls_per_execute: usize,
+    /// How long one tool call may wait for the host's answer. The default is unset, no limit.
+    pub call_timeout: Option<Duration>,
+    /// How long a run that `execute` or `poll` left `running` may wait for the next `execute` or
+    /// `poll` before it expires. The default is unset, no limit.
+    pub idle_timeout: Option<Duration>,
 }
 
 /// What `execute` or `poll` answers, from the sandbox to the model. It serializes as the JSON
@@ -66,7 +91,22 @@ struct Run {
     answered_calls: Vec<host::Call>,
     call: host::Call,
     function_call: Box<ReplFunctionCall>,
-    answer: BoxFuture<'static, Result<Value, host::Error>>,
+    /// The host's answer to `call`, or `None` once the call timeout passes first.
+    answer: BoxFuture<'static, Option<Result<Value, host::Error>>>,
+    idle_since: Instant,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            run_time: Duration::from_secs(30),
+            memory_bytes: 256 * 1024 * 1024,
+            recursion_depth: 1000,
+            calls_per_execute: 100,
+            call_timeout: None,
+            idle_timeout: None,
+        }
+    }
 }
 
 impl<H: Host> Sandbox<H> {
@@ -76,12 +116,15 @@ impl<H: Host> Sandbox<H> {
             host,
             execute_wait: Duration::from_secs(30),
             poll_wait: Duration::from_secs(10),
+            limits: Limits::default(),
         }
     }
 
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
-    /// time spent waiting on the host, not the script's own running time. A script that fails
-    /// is a `failed` status, as is a request while another run is still running.
+    /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
+    /// script that fails is a `failed` status, as is a request while another run is still
+    /// running. If a run waited past its idle timeout, it expires and `execute` answers its
+    /// `failed` status without running `code`.
     pub async fn execute(&mut self, code: &str) -> Status {
         let span = tracing::info_span!(
             "execute",
@@ -92,6 +135,9 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
+            if let Some(status) = self.expire_idle_run() {
+                return status;
+            }
             let session = match self.state.take() {
                 Some(State::Idle(session)) => session,
                 suspended => {
@@ -106,14 +152,9 @@ impl<H: Host> Sandbox<H> {
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            match self.repl.feed_start(session, code) {
-                Progress::Call {
-                    call,
-                    function_call,
-                } => self.suspend(id, Vec::new(), call, function_call),
-                Progress::Ended { result, session } => {
-                    return self.end_run(session, result, Vec::new());
-                }
+            let progress = self.repl.feed_start(session, code);
+            if let Some(status) = self.suspend_or_end(id, Vec::new(), progress) {
+                return status;
             }
             self.wait_timeout(self.execute_wait).await
         }
@@ -134,14 +175,16 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            if matches!(&self.state, Some(State::Suspended(run)) if run.id == run_id) {
-                self.wait_timeout(self.poll_wait).await
-            } else {
+            if !matches!(&self.state, Some(State::Suspended(run)) if run.id == run_id) {
                 let error = format!("no run {run_id}");
-                Status::Failed {
+                return Status::Failed {
                     error,
                     calls: Vec::new(),
-                }
+                };
+            }
+            match self.expire_idle_run() {
+                Some(status) => status,
+                None => self.wait_timeout(self.poll_wait).await,
             }
         }
         .instrument(span.clone())
@@ -162,6 +205,7 @@ impl<H: Host> Sandbox<H> {
             let answer = match future::select(&mut run.answer, &mut timer).await {
                 Either::Left((answer, _)) => answer,
                 Either::Right(_) => {
+                    run.idle_since = Instant::now();
                     Span::current().record("call_count", run.answered_calls.len());
                     return Status::Running { run_id: run.id };
                 }
@@ -176,36 +220,73 @@ impl<H: Host> Sandbox<H> {
                 function_call,
                 ..
             } = run;
-            answered_calls.push(call);
-            Span::current().record("call_count", answered_calls.len());
-            match self.repl.resume(function_call, answer) {
-                Progress::Call {
-                    call,
-                    function_call,
-                } => self.suspend(id, answered_calls, call, function_call),
-                Progress::Ended { result, session } => {
-                    return self.end_run(session, result, answered_calls);
+            let progress = match answer {
+                Some(answer) => {
+                    answered_calls.push(call);
+                    Span::current().record("call_count", answered_calls.len());
+                    self.repl.resume(function_call, answer)
                 }
+                None => {
+                    let message = format!("{} passed the call timeout", call.tool_id);
+                    self.repl.abort(function_call, message)
+                }
+            };
+            if let Some(status) = self.suspend_or_end(id, answered_calls, progress) {
+                return status;
             }
         }
     }
 
-    /// Suspends the run at `call` until the host's answer arrives.
-    fn suspend(
+    /// Suspends run `id` at the tool call `progress` reached, or ends it with its status. A call
+    /// past the call limit ends the run instead of reaching the host.
+    fn suspend_or_end(
         &mut self,
         id: u64,
         answered_calls: Vec<host::Call>,
-        call: host::Call,
-        function_call: Box<ReplFunctionCall>,
-    ) {
-        let answer = self.call_host(&call);
-        self.state = Some(State::Suspended(Run {
-            id,
-            answered_calls,
-            call,
-            function_call,
-            answer,
-        }));
+        mut progress: Progress,
+    ) -> Option<Status> {
+        let call_limit = self.limits.calls_per_execute;
+        if answered_calls.len() >= call_limit
+            && let Progress::Call { function_call, .. } = progress
+        {
+            let message = format!("the script reached the call limit of {call_limit}");
+            progress = self.repl.abort(function_call, message);
+        }
+        match progress {
+            Progress::Call {
+                call,
+                function_call,
+            } => {
+                let answer = self.call_host(id, &call);
+                self.state = Some(State::Suspended(Run {
+                    id,
+                    answered_calls,
+                    call,
+                    function_call,
+                    answer,
+                    idle_since: Instant::now(),
+                }));
+                None
+            }
+            Progress::Ended { result, session } => {
+                Some(self.end_run(session, result, answered_calls))
+            }
+        }
+    }
+
+    /// Ends the suspended run if it has waited past the idle timeout, and says it expired.
+    fn expire_idle_run(&mut self) -> Option<Status> {
+        let idle_timeout = self.limits.idle_timeout?;
+        let expired = matches!(&self.state, Some(State::Suspended(run)) if run.idle_since.elapsed() >= idle_timeout);
+        if !expired {
+            return None;
+        }
+        let Some(State::Suspended(run)) = self.state.take() else {
+            panic!("expire_idle_run without a suspended run");
+        };
+        let session = Repl::abandon(run.function_call);
+        let error = format!("run {} expired", run.id);
+        Some(self.end_run(session, Err(error), run.answered_calls))
     }
 
     /// Ends the run: `session` is idle again, and the script's result becomes the status.
@@ -225,17 +306,30 @@ impl<H: Host> Sandbox<H> {
         }
     }
 
-    /// Sends `call` to the host and traces its answer in a `call` span with no parent.
-    fn call_host(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
-        let span = tracing::info_span!(parent: None, "call", tool_id = %call.tool_id, status = Empty, duration = Empty);
+    /// Sends `call`, made by run `run_id`, to the host and traces its answer in a `call` span
+    /// with no parent. The answer is `None` if the call timeout passes first.
+    fn call_host(
+        &self,
+        run_id: u64,
+        call: &host::Call,
+    ) -> BoxFuture<'static, Option<Result<Value, host::Error>>> {
+        let span = tracing::info_span!(parent: None, "call", run_id, tool_id = %call.tool_id, status = Empty, duration = Empty);
         let answer = self.host.call(call);
+        let timeout = self.limits.call_timeout.map(Delay::new);
         let started = Instant::now();
         async move {
-            let answer = answer.await;
+            let answer = match timeout {
+                Some(timeout) => match future::select(answer, timeout).await {
+                    Either::Left((answer, _)) => Some(answer),
+                    Either::Right(_) => None,
+                },
+                None => Some(answer.await),
+            };
             let status = match &answer {
-                Ok(_) => "answered",
-                Err(host::Error::Refused(_)) => "refused",
-                Err(host::Error::Failed(_)) => "failed",
+                Some(Ok(_)) => "answered",
+                Some(Err(host::Error::Refused(_))) => "refused",
+                Some(Err(host::Error::Failed(_))) => "failed",
+                None => "timed_out",
             };
             record_end(&Span::current(), status, started);
             answer
@@ -259,16 +353,23 @@ impl<H: Host> Builder<H> {
         self
     }
 
+    /// What a script may use before the sandbox stops it. The default is [`Limits::default`].
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// The sandbox, with an empty Python session.
     pub fn build(self) -> Sandbox<H> {
         let tool_ids = self.host.tools().into_iter().map(|tool| tool.id).collect();
         Sandbox {
             host: self.host,
             repl: Repl::new(tool_ids),
-            state: Some(State::Idle(Repl::new_session())),
+            state: Some(State::Idle(Repl::new_session(&self.limits))),
             last_run_id: 0,
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
+            limits: self.limits,
         }
     }
 }

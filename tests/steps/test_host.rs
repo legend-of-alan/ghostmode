@@ -5,6 +5,7 @@ use std::time::Duration;
 use cucumber::{given, when};
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, FutureExt};
+use ghostmode::Limits;
 use ghostmode::host::{self, Host};
 use serde_json::Value;
 
@@ -108,6 +109,20 @@ fn host_input_schema(world: &mut World, tool_id: String, input_schema: String) {
 fn sandbox_waits(world: &mut World, execute_ms: u64, poll_ms: u64) {
     world.execute_wait = Some(Duration::from_millis(execute_ms));
     world.poll_wait = Some(Duration::from_millis(poll_ms));
+}
+
+#[given(regex = r"^a sandbox whose `(\w+)` is (\d+)( ms| MiB|)$")]
+fn sandbox_limit(world: &mut World, field: String, number: usize, unit: String) {
+    let limits = world.limits.get_or_insert_with(Limits::default);
+    let millis = Duration::from_millis(number as u64);
+    match (field.as_str(), unit.as_str()) {
+        ("run_time", " ms") => limits.run_time = millis,
+        ("memory_bytes", " MiB") => limits.memory_bytes = number * 1024 * 1024,
+        ("calls_per_execute", "") => limits.calls_per_execute = number,
+        ("call_timeout", " ms") => limits.call_timeout = Some(millis),
+        ("idle_timeout", " ms") => limits.idle_timeout = Some(millis),
+        _ => panic!("no limit `{field}` with unit `{}`", unit.trim()),
+    }
 }
 
 #[when(regex = r"^`(\w+)` answers (.+)$")]
