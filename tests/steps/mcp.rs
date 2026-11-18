@@ -91,7 +91,9 @@ fn server_answers_structured(world: &mut World, mcp_id: String) {
     answers.insert(mcp_id, Answer::ArgumentsAsStructuredContent);
 }
 
-#[given(regex = r"^an MCP server whose `(\S+)` answers its arguments as text$")]
+#[given(
+    regex = r"^(?:an MCP server whose|the MCP server's) `(\S+)` (?:also )?answers its arguments as text$"
+)]
 fn server_answers_text(world: &mut World, mcp_id: String) {
     let answers = &mut world.mcp.server.answers;
     answers.insert(mcp_id, Answer::ArgumentsAsText);

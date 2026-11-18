@@ -22,7 +22,7 @@ Feature: An MCP client offers its server's tools to scripts
 
   Scenario: Connecting fails naming both tools when two tools map to one id
     Given an MCP server whose `get.weather` answers its arguments as text
-    And an MCP server whose `get-weather` answers its arguments as text
+    And the MCP server's `get-weather` also answers its arguments as text
     When the host connects to the MCP server
     Then connecting fails with an error naming `get.weather`
     And connecting fails with an error naming `get-weather`
