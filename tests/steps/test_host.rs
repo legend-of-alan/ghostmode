@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cucumber::{given, when};
+use cucumber::{given, then, when};
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, FutureExt};
+use ghostmode::Sandbox;
 use ghostmode::host::{self, Host};
 use serde_json::Value;
 
@@ -96,4 +97,11 @@ fn held_call_answers(world: &mut World, _tool_id: String, answer: String) {
     sender
         .send(parse_json(&answer))
         .expect("the run still waits");
+}
+
+#[then(regex = r"^a default sandbox waits (\d+) seconds in execute and (\d+) seconds in poll$")]
+fn default_waits(_world: &mut World, execute_secs: u64, poll_secs: u64) {
+    let sandbox = Sandbox::builder(TestHost::default()).build();
+    assert_eq!(sandbox.execute_wait(), Duration::from_secs(execute_secs));
+    assert_eq!(sandbox.poll_wait(), Duration::from_secs(poll_secs));
 }

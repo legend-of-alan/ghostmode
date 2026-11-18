@@ -49,6 +49,16 @@ impl<H: Host> Sandbox<H> {
         }
     }
 
+    /// How long `execute` waits for a script before it answers `running`.
+    pub fn execute_wait(&self) -> Duration {
+        self.execute_wait
+    }
+
+    /// How long `poll` waits for a running script before it answers `running` again.
+    pub fn poll_wait(&self) -> Duration {
+        self.poll_wait
+    }
+
     /// Runs a script for up to the execute wait. A script that fails is a `failed` status,
     /// as is a request while another run is still running.
     pub async fn execute(&mut self, request: tool::Execute) -> tool::Status {
