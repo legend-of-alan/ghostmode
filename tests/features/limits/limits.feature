@@ -40,6 +40,18 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
+  Scenario: A run polled inside the idle timeout stays running, then finishes
+    Given a host whose `search` answers only when told to
+    And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
+    And a sandbox whose `idle_timeout` is 10000 ms
+    When the model executes search(query="a")
+    Then the status is {"status": "running", "run_id": 1}
+    When the model polls run 1
+    Then the status is {"status": "running", "run_id": 1}
+    When `search` answers {"hits": []}
+    And the model polls run 1
+    Then the status is {"status": "finished", "value": {"hits": []}}
+
   Scenario: A run left unpolled past the idle timeout expires, and the session runs on
     Given a host whose `search` answers only when told to
     And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
