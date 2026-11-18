@@ -1,5 +1,7 @@
 //! The feature scenarios: one `World`, run once per executor.
 
+#[path = "steps/limits.rs"]
+mod limits;
 #[cfg(feature = "rmcp")]
 #[path = "steps/mcp.rs"]
 mod mcp;
@@ -17,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
-use ghostmode::Sandbox;
+use ghostmode::{Limits, Sandbox};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
 use tracing::instrument::WithSubscriber;
@@ -27,6 +29,7 @@ struct World {
     host: test_host::TestHost,
     execute_wait: Option<Duration>,
     poll_wait: Option<Duration>,
+    limits: Option<Limits>,
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
     elapsed: Duration,
@@ -60,6 +63,9 @@ impl World {
             }
             if let Some(wait) = self.poll_wait {
                 builder = builder.poll_wait(wait);
+            }
+            if let Some(limits) = self.limits {
+                builder = builder.limits(limits);
             }
             builder.build()
         });

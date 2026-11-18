@@ -8,4 +8,5 @@ Feature: Spans carry ids, statuses, durations and counts, never a script's data
     And the captured spans are execute and call
     And the captured span fields are only run_id, status, duration, tool_id and call_count
     And the call span has no parent
+    And the call span's `run_id` equals the execute span's
     And no captured span field holds "secret"
