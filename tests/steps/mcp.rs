@@ -81,7 +81,7 @@ pub(crate) struct Connection {
         RunningService<RoleServer, TestServer>,
         RunningService<RoleClient, ()>,
     )>,
-    /// What `mcp::Client::new` returned as its error, if it refused the server's tools.
+    /// What `mcp::Server::new` returned as its error, if it refused the server's tools.
     client_error: Option<String>,
 }
 
@@ -113,7 +113,7 @@ async fn connect(world: &mut World) {
         .await
         .expect("client connects");
     let server = server.await.expect("server task").expect("server connects");
-    match ghostmode::mcp::Client::new(client.peer().clone()).await {
+    match ghostmode::mcp::Server::new(client.peer().clone()).await {
         Ok(mcp_client) => world.host.mcp_client = Some(Arc::new(mcp_client)),
         Err(err) => world.mcp.client_error = Some(err.to_string()),
     }

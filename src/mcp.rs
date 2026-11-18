@@ -18,28 +18,29 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
-/// A host that offers a connected MCP server's tools to scripts and sends each call to the
-/// server as `tools/call`. It lists the tools when built and again on `refresh`.
-pub struct Client {
+/// A host that wraps the MCP server at the other end of `peer`: it offers the server's tools to
+/// scripts and sends each call to the server as `tools/call`. It lists the tools when built and
+/// again on `refresh`.
+pub struct Server {
     peer: Peer<RoleClient>,
     tools: Vec<Tool>,
     /// Each tool's MCP id, the `name` the server calls it by, by tool id.
     mcp_ids: HashMap<String, String>,
 }
 
-impl Client {
+impl Server {
     /// Lists the server's tools over `peer`, a connected rmcp client.
     pub async fn new(peer: Peer<RoleClient>) -> Result<Self, Error> {
-        let mut client = Self {
+        let mut server = Self {
             peer,
             tools: Vec::new(),
             mcp_ids: HashMap::new(),
         };
-        client.refresh().await?;
-        Ok(client)
+        server.refresh().await?;
+        Ok(server)
     }
 
-    /// Lists the server's tools again. On an `Err` the client keeps the tools it had.
+    /// Lists the server's tools again. On an `Err` it keeps the tools it had.
     pub async fn refresh(&mut self) -> Result<(), Error> {
         let mut tools = Vec::new();
         let mut mcp_ids = HashMap::new();
@@ -65,7 +66,7 @@ impl Client {
     }
 }
 
-impl Host for Client {
+impl Host for Server {
     fn tools(&self) -> Vec<Tool> {
         self.tools.clone()
     }
@@ -85,7 +86,7 @@ impl Host for Client {
     }
 }
 
-/// Why `Client` could not offer the server's tools.
+/// Why `Server` could not offer the server's tools.
 #[derive(Debug)]
 pub enum Error {
     /// Listing the server's tools failed.
