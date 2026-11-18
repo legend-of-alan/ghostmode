@@ -28,22 +28,33 @@ pub(crate) struct TestHost {
     /// The sending halves that answer `Answer::Held` calls by tool id, from a When step to the
     /// call's future.
     pub(crate) held_calls: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    /// The host over the scenario's MCP server, whose tools this host offers beside its own.
+    pub(crate) mcp_client: Option<Arc<dyn Host + Send + Sync>>,
 }
 
 impl Host for TestHost {
     fn tools(&self) -> Vec<host::Tool> {
-        self.answers
-            .keys()
-            .map(|id| host::Tool {
-                id: id.clone(),
-                description: format!("The scenario's {id} tool."),
-                input_schema: serde_json::json!({"type": "object"}),
-            })
-            .collect()
+        let tools = self.answers.keys().map(|id| host::Tool {
+            id: id.clone(),
+            description: format!("The scenario's {id} tool."),
+            input_schema: serde_json::json!({"type": "object"}),
+        });
+        let mcp_tools = self
+            .mcp_client
+            .iter()
+            .flat_map(|mcp_client| mcp_client.tools());
+        tools.chain(mcp_tools).collect()
     }
 
     fn call(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
-        match self.answers[&call.tool_id].clone() {
+        let Some(answer) = self.answers.get(&call.tool_id).cloned() else {
+            let mcp_client = self
+                .mcp_client
+                .as_ref()
+                .expect("an MCP client offers the tool");
+            return mcp_client.call(call);
+        };
+        match answer {
             Answer::Value(value) => future::ready(Ok(value)).boxed(),
             Answer::Refused(reason) => future::ready(Err(host::Error::Refused(reason))).boxed(),
             Answer::Failed(message) => future::ready(Err(host::Error::Failed(message))).boxed(),
