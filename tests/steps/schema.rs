@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use cucumber::gherkin::Step;
 use cucumber::{then, when};
 use ghostmode::host::Host;
 use ghostmode::schema;
@@ -92,12 +93,29 @@ fn model_tool_declares_exactly(world: &mut World, tool_id: String, arg: String, 
 
 #[then(regex = r#"^the execute description contains "(.+)"$"#)]
 fn execute_description_contains(world: &mut World, text: String) {
+    let description = execute_description(world);
+    assert!(description.contains(&text), "{description}");
+}
+
+#[then(regex = r"^the execute description contains:$")]
+fn execute_description_contains_docstring(world: &mut World, step: &Step) {
+    let text = step.docstring.as_ref().expect("a docstring").trim();
+    let description = execute_description(world);
+    assert!(description.contains(text), "{description}");
+}
+
+#[then(regex = r#"^the execute description doesn't contain "(.+)"$"#)]
+fn execute_description_lacks(world: &mut World, text: String) {
+    let description = execute_description(world);
+    assert!(!description.contains(&text), "{description}");
+}
+
+/// The description of the `execute` tool that `list_mcp_tools` lists for the scenario's host.
+fn execute_description(world: &World) -> String {
     let tools = schema::list_mcp_tools(&world.host.tools());
     let execute = tools.iter().find(|tool| tool["name"] == "execute");
-    let description = execute.expect("execute")["description"]
-        .as_str()
-        .expect("a description");
-    assert!(description.contains(&text), "{description}");
+    let description = execute.expect("execute")["description"].as_str();
+    description.expect("a description").to_owned()
 }
 
 /// Removes the argument `id` from the model's call, failing if the call doesn't have it.

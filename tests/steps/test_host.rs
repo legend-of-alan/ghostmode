@@ -34,13 +34,20 @@ pub(crate) struct TestHost {
     /// The input schema of each tool a Given step set one for, by tool id. Other tools take
     /// `{"type": "object"}`.
     pub(crate) input_schemas: HashMap<String, Value>,
+    /// The description of each tool a Given step set one for, by tool id. Other tools say
+    /// "The scenario's <id> tool."
+    pub(crate) descriptions: HashMap<String, String>,
 }
 
 impl Host for TestHost {
     fn tools(&self) -> Vec<host::Tool> {
         let tools = self.answers.keys().map(|id| host::Tool {
             id: id.clone(),
-            description: format!("The scenario's {id} tool."),
+            description: self
+                .descriptions
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| format!("The scenario's {id} tool.")),
             input_schema: self
                 .input_schemas
                 .get(id)
@@ -83,7 +90,7 @@ pub(crate) fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|err| panic!("{text} is not JSON: {err}"))
 }
 
-#[given(regex = r#"^a host whose `(\w+)` answers ([\[{"].*)$"#)]
+#[given(regex = r#"^a host whose `([^`]+)` answers ([\[{"].*)$"#)]
 fn host_answers(world: &mut World, tool_id: String, answer: String) {
     world
         .host
@@ -114,6 +121,15 @@ fn host_input_schema(world: &mut World, tool_id: String, input_schema: String) {
         .or_insert(Answer::Value(Value::Null));
     host.input_schemas
         .insert(tool_id, parse_json(&input_schema));
+}
+
+#[given(regex = r#"^a host whose `(\w+)` description is "(.*)"$"#)]
+fn host_description(world: &mut World, tool_id: String, description: String) {
+    let host = &mut world.host;
+    host.answers
+        .entry(tool_id.clone())
+        .or_insert(Answer::Value(Value::Null));
+    host.descriptions.insert(tool_id, description);
 }
 
 #[given(regex = r"^a sandbox whose execute wait is (\d+) ms and poll wait is (\d+) ms$")]
