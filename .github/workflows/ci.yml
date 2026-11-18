@@ -44,8 +44,10 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
 
+      # Each check that depends on features runs once for the default build and once with every feature.
       - name: clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
+        shell: bash
+        run: for features in "" --all-features; do cargo clippy --all-targets --locked $features -- -D warnings; done
 
       - name: guardrails
         if: runner.os == 'Linux'
@@ -69,8 +71,11 @@ jobs:
               } END { exit bad }' "$f" || repeats=1
           done
           [ -z "$repeats" ] || { echo "Rename each one, or end its line with '// repeats module: <reason>' (CONTRIBUTING.md Naming rule 8)."; exit 1; }
+          # The default build brings no runtime: tokio is only for opt-in features.
+          (! cargo tree -e normal --locked --prefix none | grep -E '^tokio ')
           # ghostmode is MIT: every AND term of every license in its tree must offer a permissive choice.
-          cargo tree -e normal --locked --target all --prefix none --no-dedupe --format '{l}' | sort -u | awk '
+          for features in "" --all-features; do
+          cargo tree -e normal --locked --target all --prefix none --no-dedupe --format '{l}' $features | sort -u | awk '
             { terms = $0; gsub(/[()]/, "", terms); gsub(/ *\/ */, " OR ", terms)
               n = split(terms, ands, / AND /)
               for (i = 1; i <= n; i++) {
@@ -80,6 +85,8 @@ jobs:
               }
             }
             END { exit bad }'
+          done
 
       - name: test
-        run: cargo test --locked
+        shell: bash
+        run: for features in "" --all-features; do cargo test --locked $features; done
