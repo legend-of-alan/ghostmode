@@ -10,6 +10,8 @@ Feature: The caller hands its model execute and poll as MCP tools or OpenAI func
     Then the status is {"status": "finished", "value": 2}
     When the model calls `poll` with {"run_id": 1}
     Then the status is failed with an error naming no run 1
+    And the `execute` schema declares exactly `code` as a string, required, with additionalProperties false
+    And the `poll` schema declares exactly `run_id` as an integer, required, with additionalProperties false
 
   Scenario: The execute description lists each tool as a keyword-only signature
     Given a host whose `search` input schema is {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}, "after": {"type": "string"}}, "required": ["query"]}
