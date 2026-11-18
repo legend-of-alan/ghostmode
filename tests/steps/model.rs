@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use cucumber::gherkin::Step;
 use cucumber::{then, when};
-use ghostmode::tool;
 
 use crate::test_host::parse_json;
 use crate::{Request, World};
@@ -10,18 +9,18 @@ use crate::{Request, World};
 #[when(regex = r"^the model executes (.*[^:])$")]
 async fn execute_code(world: &mut World, code: String) {
     let code = code.replace("; ", "\n");
-    world.send(Request::Execute(tool::Execute { code })).await;
+    world.send(Request::Execute(code)).await;
 }
 
 #[when(regex = r"^the model executes this script:$")]
 async fn execute_docstring(world: &mut World, step: &Step) {
     let code = step.docstring.clone().expect("a script docstring");
-    world.send(Request::Execute(tool::Execute { code })).await;
+    world.send(Request::Execute(code)).await;
 }
 
 #[when(regex = r"^the model polls run (\d+)$")]
 async fn poll_run(world: &mut World, run_id: u64) {
-    world.send(Request::Poll(tool::Poll { run_id })).await;
+    world.send(Request::Poll(run_id)).await;
 }
 
 #[then(regex = r"^the status is (\{.+\})$")]

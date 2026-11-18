@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
-use ghostmode::{Sandbox, tool};
+use ghostmode::Sandbox;
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
 use tracing::instrument::WithSubscriber;
@@ -37,8 +37,8 @@ impl fmt::Debug for World {
 
 /// One of the model's two tool calls, from a When step to the sandbox.
 enum Request {
-    Execute(tool::Execute),
-    Poll(tool::Poll),
+    Execute(String),
+    Poll(u64),
 }
 
 impl World {
@@ -58,8 +58,8 @@ impl World {
         });
         let answer = async move {
             let status = match request {
-                Request::Execute(request) => sandbox.execute(request).await,
-                Request::Poll(request) => sandbox.poll(request).await,
+                Request::Execute(code) => sandbox.execute(&code).await,
+                Request::Poll(run_id) => sandbox.poll(run_id).await,
             };
             (sandbox, status)
         }

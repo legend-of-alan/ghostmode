@@ -10,9 +10,10 @@ pub trait Host {
     /// The tools a script may call, by id.
     fn tools(&self) -> Vec<Tool>;
 
-    /// Answers one tool call from a script. The run waits for the future, and a run that
-    /// outlives its wait keeps the future until a later `poll` finds it ready.
-    fn call(&self, call: Call) -> BoxFuture<'static, Result<Value, Error>>;
+    /// Answers one tool call from a script. The future clones what it needs from `call`. The
+    /// run waits for the future, and a run that outlives its wait keeps the future until a
+    /// later `poll` finds it ready.
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>>;
 }
 
 /// A tool the host provides. A script calls it by its id, with keyword arguments.

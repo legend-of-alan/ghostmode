@@ -1,24 +1,9 @@
-//! The model's two tools, `execute` and `poll`: what the model sends and the status it reads.
+//! What the model reads back from its two tools, `execute` and `poll`.
 
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::host;
-
-/// The model's `execute` tool call, from the model to the sandbox: run this script.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Execute {
-    /// The Python script.
-    pub code: String,
-}
-
-/// The model's `poll` tool call, from the model to the sandbox: wait again for a run that
-/// `execute` left running.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Poll {
-    /// The run id a `running` status gave.
-    pub run_id: u64,
-}
 
 /// What `execute` or `poll` answers, from the sandbox to the model. It serializes as the JSON
 /// the model sees, such as `{"status": "running", "run_id": 1}`.

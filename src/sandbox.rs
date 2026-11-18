@@ -9,7 +9,7 @@ use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::host::{self, Host};
-use crate::repl::{Progress, Repl};
+use crate::repl::{MontyRepl, Progress, Repl, ReplFunctionCall};
 use crate::tool;
 
 /// One Python session that runs the model's scripts, and the host whose tools they call.
@@ -17,6 +17,7 @@ use crate::tool;
 pub struct Sandbox<H> {
     host: H,
     repl: Repl,
+    idle_session: Option<Box<MontyRepl>>,
     run: Option<Run>,
     last_run_id: u64,
     execute_wait: Duration,
@@ -30,11 +31,12 @@ pub struct Builder<H> {
     poll_wait: Duration,
 }
 
-/// A script waiting on a tool call the host has not answered yet.
+/// A script suspended at a tool call the host has not answered yet.
 struct Run {
     id: u64,
     answered_calls: Vec<host::Call>,
     call: host::Call,
+    function_call: Box<ReplFunctionCall>,
     answer: BoxFuture<'static, Result<Value, host::Error>>,
 }
 
@@ -48,9 +50,9 @@ impl<H: Host> Sandbox<H> {
         }
     }
 
-    /// Runs a script for up to the execute wait. A script that fails is a `failed` status,
-    /// as is a request while another run is still running.
-    pub async fn execute(&mut self, request: tool::Execute) -> tool::Status {
+    /// Runs `code` for up to the execute wait. A script that fails is a `failed` status, as is
+    /// a request while another run is still running.
+    pub async fn execute(&mut self, code: &str) -> tool::Status {
         let span = tracing::info_span!(
             "execute",
             run_id = Empty,
@@ -60,24 +62,23 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            if let Some(run) = &self.run {
-                let error = format!("run {} is still running", run.id);
+            let Some(session) = self.idle_session.take() else {
+                let error = format!("run {} is still running", self.last_run_id);
                 return tool::Status::Failed {
                     error,
                     calls: Vec::new(),
                 };
-            }
+            };
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            match self.repl.feed_start(&request.code) {
-                Progress::Call(call) => self.suspend(id, Vec::new(), call),
-                Progress::Finished(value) => return tool::Status::Finished { value },
-                Progress::Failed(error) => {
-                    return tool::Status::Failed {
-                        error,
-                        calls: Vec::new(),
-                    };
+            match self.repl.feed_start(session, code) {
+                Progress::Call {
+                    call,
+                    function_call,
+                } => self.suspend(id, Vec::new(), call, function_call),
+                Progress::Ended { result, session } => {
+                    return self.end_run(session, result, Vec::new());
                 }
             }
             self.wait_timeout(self.execute_wait).await
@@ -88,25 +89,21 @@ impl<H: Host> Sandbox<H> {
         status
     }
 
-    /// Waits up to the poll wait for the run that `execute` left running.
-    pub async fn poll(&mut self, request: tool::Poll) -> tool::Status {
+    /// Waits up to the poll wait for the run with `run_id` that `execute` left running.
+    pub async fn poll(&mut self, run_id: u64) -> tool::Status {
         let span = tracing::info_span!(
             "poll",
-            run_id = request.run_id,
+            run_id,
             status = Empty,
             call_count = Empty,
             duration = Empty
         );
         let started = Instant::now();
         let status = async {
-            if self
-                .run
-                .as_ref()
-                .is_some_and(|run| run.id == request.run_id)
-            {
+            if self.run.as_ref().is_some_and(|run| run.id == run_id) {
                 self.wait_timeout(self.poll_wait).await
             } else {
-                let error = format!("no run {}", request.run_id);
+                let error = format!("no run {run_id}");
                 tool::Status::Failed {
                     error,
                     calls: Vec::new(),
@@ -137,36 +134,60 @@ impl<H: Host> Sandbox<H> {
                 id,
                 mut answered_calls,
                 call,
+                function_call,
                 ..
             } = self.run.take().expect("a suspended run");
             answered_calls.push(call);
             Span::current().record("call_count", answered_calls.len());
-            match self.repl.resume(answer) {
-                Progress::Call(call) => self.suspend(id, answered_calls, call),
-                Progress::Finished(value) => return tool::Status::Finished { value },
-                Progress::Failed(error) => {
-                    return tool::Status::Failed {
-                        error,
-                        calls: answered_calls,
-                    };
+            match self.repl.resume(function_call, answer) {
+                Progress::Call {
+                    call,
+                    function_call,
+                } => self.suspend(id, answered_calls, call, function_call),
+                Progress::Ended { result, session } => {
+                    return self.end_run(session, result, answered_calls);
                 }
             }
         }
     }
 
-    /// Suspends the run at `call`, its script's tool call, until the host's answer arrives.
-    fn suspend(&mut self, id: u64, answered_calls: Vec<host::Call>, call: host::Call) {
-        let answer = self.call_host(call.clone());
+    /// Suspends the run at `call` until the host's answer arrives.
+    fn suspend(
+        &mut self,
+        id: u64,
+        answered_calls: Vec<host::Call>,
+        call: host::Call,
+        function_call: Box<ReplFunctionCall>,
+    ) {
+        let answer = self.call_host(&call);
         self.run = Some(Run {
             id,
             answered_calls,
             call,
+            function_call,
             answer,
         });
     }
 
+    /// Ends the run: `session` is idle again, and the script's result becomes the status.
+    fn end_run(
+        &mut self,
+        session: Box<MontyRepl>,
+        result: Result<Value, String>,
+        answered_calls: Vec<host::Call>,
+    ) -> tool::Status {
+        self.idle_session = Some(session);
+        match result {
+            Ok(value) => tool::Status::Finished { value },
+            Err(error) => tool::Status::Failed {
+                error,
+                calls: answered_calls,
+            },
+        }
+    }
+
     /// Sends `call` to the host and traces its answer in a `call` span with no parent.
-    fn call_host(&self, call: host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
+    fn call_host(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
         let span = tracing::info_span!(parent: None, "call", tool_id = %call.tool_id, status = Empty, duration = Empty);
         let answer = self.host.call(call);
         let started = Instant::now();
@@ -207,6 +228,7 @@ impl<H: Host> Builder<H> {
         Sandbox {
             host: self.host,
             repl: Repl::new(tool_ids),
+            idle_session: Some(Repl::new_session()),
             run: None,
             last_run_id: 0,
             execute_wait: self.execute_wait,

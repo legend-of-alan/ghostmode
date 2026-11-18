@@ -41,7 +41,7 @@ impl Host for TestHost {
             .collect()
     }
 
-    fn call(&self, call: host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
+    fn call(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
         match self.answers[&call.tool_id].clone() {
             Answer::Value(value) => future::ready(Ok(value)).boxed(),
             Answer::Refused(reason) => future::ready(Err(host::Error::Refused(reason))).boxed(),
