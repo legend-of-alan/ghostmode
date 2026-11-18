@@ -52,5 +52,19 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
+  Scenario: An execute after the idle timeout answers the expired run's calls instead of running
+    Given a host whose `search` answers {"hits": []}
+    And a host whose `fetch` answers only when told to
+    And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
+    And a sandbox whose `idle_timeout` is 50 ms
+    When the model executes x = 1; search(query="a"); fetch(url="u")
+    Then the status is {"status": "running", "run_id": 1}
+    When 60 ms pass
+    And the model executes x
+    Then the status is failed with an error naming run 1 expired
+    And the failed status lists the calls [{"tool_id": "search", "args": {"query": "a"}}]
+    When the model executes x
+    Then the status is {"status": "finished", "value": 1}
+
   Scenario: The default limits are the design's
     Then the default limits are 30 s of run time, 256 MiB, a recursion depth of 1000, 100 calls per execute and no call or idle timeout

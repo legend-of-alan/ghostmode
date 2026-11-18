@@ -123,7 +123,8 @@ impl<H: Host> Sandbox<H> {
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
     /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
     /// script that fails is a `failed` status, as is a request while another run is still
-    /// running. A run past its idle timeout expires first.
+    /// running. If a run waited past its idle timeout, it expires and `execute` answers its
+    /// `failed` status without running `code`.
     pub async fn execute(&mut self, code: &str) -> Status {
         let span = tracing::info_span!(
             "execute",
@@ -134,7 +135,9 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            self.expire_idle_run();
+            if let Some(status) = self.expire_idle_run() {
+                return status;
+            }
             let session = match self.state.take() {
                 Some(State::Idle(session)) => session,
                 suspended => {
