@@ -2,6 +2,9 @@
 
 #[path = "steps/limits.rs"]
 mod limits;
+#[cfg(feature = "rmcp")]
+#[path = "steps/mcp.rs"]
+mod mcp;
 #[path = "steps/model.rs"]
 mod model;
 #[path = "steps/schema.rs"]
@@ -32,6 +35,8 @@ struct World {
     elapsed: Duration,
     dispatch: Dispatch,
     span_capture: spans::SpanCapture,
+    #[cfg(feature = "rmcp")]
+    mcp: mcp::Connection,
 }
 
 impl fmt::Debug for World {
@@ -86,29 +91,33 @@ impl World {
     }
 }
 
-/// Runs the whole feature tree once and says whether any scenario failed.
-async fn run_scenarios() -> bool {
+/// Runs the whole feature tree once and says whether any scenario failed. A feature tagged
+/// `@rmcp` needs the `rmcp` feature and a Tokio runtime, so it runs only when it has both.
+async fn run_scenarios(on_tokio: bool) -> bool {
+    let run_rmcp = on_tokio && cfg!(feature = "rmcp");
     World::cucumber()
         .max_concurrent_scenarios(1)
         .fail_on_skipped()
-        .run("tests/features")
+        .filter_run("tests/features", move |feature, _, _| {
+            run_rmcp || !feature.tags.iter().any(|tag| tag == "rmcp")
+        })
         .await
         .execution_has_failed()
 }
 
 fn main() {
     println!("executor: futures::executor::block_on");
-    let mut failed = futures::executor::block_on(run_scenarios());
+    let mut failed = futures::executor::block_on(run_scenarios(false));
     println!("executor: Tokio current-thread runtime");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("current-thread runtime");
-    failed |= runtime.block_on(run_scenarios());
+    failed |= runtime.block_on(run_scenarios(true));
     println!("executor: Tokio multi-thread runtime");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .build()
         .expect("multi-thread runtime");
-    failed |= runtime.block_on(run_scenarios());
+    failed |= runtime.block_on(run_scenarios(true));
     if failed {
         std::process::exit(1);
     }

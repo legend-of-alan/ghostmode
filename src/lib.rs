@@ -2,6 +2,8 @@
 //! the host provides the tools the script calls. The model sees two tools, `execute` and `poll`.
 
 pub mod host;
+#[cfg(feature = "rmcp")]
+pub mod mcp;
 mod repl;
 mod sandbox;
 pub mod schema;
