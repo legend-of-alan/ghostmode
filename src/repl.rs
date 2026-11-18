@@ -1,6 +1,9 @@
 //! The Python session a sandbox runs scripts in. This is the only module that talks to Monty.
 
 use monty::{MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError};
+
+/// What Monty's `feed_start` and `resume` return.
+type MontyProgress = Result<ReplProgress, Box<ReplStartError>>;
 use monty_types::{
     CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult, OsPolicy,
     PrintWriter, ResourceTracker, SleepMode,
@@ -48,16 +51,16 @@ impl Repl {
         }
     }
 
-    /// Starts `code` in the session.
+    /// Feeds `code` to the session and runs it.
     ///
     /// # Panics
     /// If a script is still waiting on a tool call.
-    pub(crate) fn start(&mut self, code: &str) -> Progress {
+    pub(crate) fn feed_start(&mut self, code: &str) -> Progress {
         let Some(State::Idle(repl)) = self.state.take() else {
-            panic!("start while a script waits on a tool call");
+            panic!("feed_start while a script waits on a tool call");
         };
         let progress = (*repl).feed_start(code, Vec::new(), PrintWriter::Disabled);
-        self.advance(progress)
+        self.run(progress)
     }
 
     /// Answers the tool call the script waits on, and runs on.
@@ -78,11 +81,11 @@ impl Repl {
                 ExtFunctionResult::Error(MontyException::new(ExcType::RuntimeError, Some(message)))
             }
         };
-        self.advance((*call).resume(answer, PrintWriter::Disabled))
+        self.run((*call).resume(answer, PrintWriter::Disabled))
     }
 
-    /// Runs the script on until it calls a tool or ends, answering every other stop itself.
-    fn advance(&mut self, mut progress: Result<ReplProgress, Box<ReplStartError>>) -> Progress {
+    /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.
+    fn run(&mut self, mut progress: MontyProgress) -> Progress {
         loop {
             progress = match progress {
                 Err(failure) => {
@@ -93,29 +96,16 @@ impl Repl {
                     self.state = Some(State::Idle(Box::new(repl)));
                     return Progress::Finished(value::to_json(value.as_ref()));
                 }
-                Ok(ReplProgress::NameLookup(lookup)) => {
-                    lookup.resume(NameLookupResult::Undefined, PrintWriter::Disabled)
-                }
-                Ok(ReplProgress::OsCall(call)) => {
-                    let answer = call.function_call.no_handler_result();
-                    call.resume(answer, PrintWriter::Disabled)
-                }
-                Ok(ReplProgress::ResolveFutures(futures)) => {
-                    let error = MontyException::runtime_error("tools are not awaitable");
-                    futures.abort(error, PrintWriter::Disabled)
-                }
-                Ok(ReplProgress::FunctionCall(call)) => {
-                    if !self.tool_ids.contains(&call.function_name) {
-                        let answer = ExtFunctionResult::NotFound(call.function_name.clone());
-                        call.resume(answer, PrintWriter::Disabled)
-                    } else if call.args.args().len() > 0 {
+                Ok(ReplProgress::FunctionCall(call))
+                    if self.tool_ids.contains(&call.function_name) =>
+                {
+                    if call.args.args().len() > 0 {
                         let message =
                             format!("{}() takes keyword arguments only", call.function_name);
                         let error = MontyException::new(ExcType::TypeError, Some(message));
                         call.resume(ExtFunctionResult::Error(error), PrintWriter::Disabled)
                     } else {
-                        let args = call.args.kwargs();
-                        let args = args.map(|(key, value)| {
+                        let args = call.args.kwargs().map(|(key, value)| {
                             let key = key.as_str().unwrap_or_default().to_string();
                             (key, value::to_json(value))
                         });
@@ -127,7 +117,31 @@ impl Repl {
                         return Progress::Call(tool_call);
                     }
                 }
+                Ok(suspension) => resume_with_no_handler(suspension),
             };
         }
+    }
+}
+
+/// Resumes a suspension that no host tool handles with the answer Monty gives when no handler
+/// accepts it: `NameError` for an unknown name and Monty's own answer for an OS call.
+fn resume_with_no_handler(suspension: ReplProgress) -> MontyProgress {
+    match suspension {
+        ReplProgress::NameLookup(lookup) => {
+            lookup.resume(NameLookupResult::Undefined, PrintWriter::Disabled)
+        }
+        ReplProgress::FunctionCall(call) => {
+            let answer = ExtFunctionResult::NotFound(call.function_name.clone());
+            call.resume(answer, PrintWriter::Disabled)
+        }
+        ReplProgress::OsCall(call) => {
+            let answer = call.function_call.no_handler_result();
+            call.resume(answer, PrintWriter::Disabled)
+        }
+        ReplProgress::ResolveFutures(futures) => {
+            let error = MontyException::runtime_error("tools are not awaitable");
+            futures.abort(error, PrintWriter::Disabled)
+        }
+        ReplProgress::Complete { repl, value } => Ok(ReplProgress::Complete { repl, value }),
     }
 }

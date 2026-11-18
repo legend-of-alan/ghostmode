@@ -72,15 +72,26 @@ impl<H: Host> Sandbox<H> {
         let started = Instant::now();
         let status = async {
             if let Some(run) = &self.run {
-                return reject(format!("run {} is still running", run.id));
+                let error = format!("run {} is still running", run.id);
+                return tool::Status::Failed {
+                    error,
+                    calls: Vec::new(),
+                };
             }
             self.last_run_id += 1;
-            Span::current().record("run_id", self.last_run_id);
-            let progress = self.repl.start(&request.code);
-            match self.park_or_finish(self.last_run_id, Vec::new(), progress) {
-                Some(status) => status,
-                None => self.wait(self.execute_wait).await,
+            let id = self.last_run_id;
+            Span::current().record("run_id", id).record("call_count", 0);
+            match self.repl.feed_start(&request.code) {
+                Progress::Call(call) => self.suspend(id, Vec::new(), call),
+                Progress::Finished(value) => return tool::Status::Finished { value },
+                Progress::Failed(error) => {
+                    return tool::Status::Failed {
+                        error,
+                        calls: Vec::new(),
+                    };
+                }
             }
+            self.wait_timeout(self.execute_wait).await
         }
         .instrument(span.clone())
         .await;
@@ -104,9 +115,13 @@ impl<H: Host> Sandbox<H> {
                 .as_ref()
                 .is_some_and(|run| run.id == request.run_id)
             {
-                self.wait(self.poll_wait).await
+                self.wait_timeout(self.poll_wait).await
             } else {
-                reject(format!("no run {}", request.run_id))
+                let error = format!("no run {}", request.run_id);
+                tool::Status::Failed {
+                    error,
+                    calls: Vec::new(),
+                }
             }
         }
         .instrument(span.clone())
@@ -115,13 +130,13 @@ impl<H: Host> Sandbox<H> {
         status
     }
 
-    /// Waits up to `wait` for the parked run, answering its tool calls as the host answers
-    /// them. The run stays parked in the sandbox while it waits, so dropping this future
+    /// Waits up to `wait` for the suspended run, answering its tool calls as the host answers
+    /// them. The run stays suspended in the sandbox while it waits, so dropping this future
     /// loses nothing.
-    async fn wait(&mut self, wait: Duration) -> tool::Status {
+    async fn wait_timeout(&mut self, wait: Duration) -> tool::Status {
         let mut timer = Delay::new(wait);
         loop {
-            let run = self.run.as_mut().expect("a parked run");
+            let run = self.run.as_mut().expect("a suspended run");
             let answer = match future::select(&mut run.answer, &mut timer).await {
                 Either::Left((answer, _)) => answer,
                 Either::Right(_) => {
@@ -134,40 +149,31 @@ impl<H: Host> Sandbox<H> {
                 mut answered_calls,
                 call,
                 ..
-            } = self.run.take().expect("a parked run");
+            } = self.run.take().expect("a suspended run");
             answered_calls.push(call);
-            let progress = self.repl.resume(answer);
-            if let Some(status) = self.park_or_finish(id, answered_calls, progress) {
-                return status;
+            Span::current().record("call_count", answered_calls.len());
+            match self.repl.resume(answer) {
+                Progress::Call(call) => self.suspend(id, answered_calls, call),
+                Progress::Finished(value) => return tool::Status::Finished { value },
+                Progress::Failed(error) => {
+                    return tool::Status::Failed {
+                        error,
+                        calls: answered_calls,
+                    };
+                }
             }
         }
     }
 
-    /// Parks the run at the tool call its script waits on, or finishes it with its status.
-    fn park_or_finish(
-        &mut self,
-        id: u64,
-        answered_calls: Vec<host::Call>,
-        progress: Progress,
-    ) -> Option<tool::Status> {
-        Span::current().record("call_count", answered_calls.len());
-        match progress {
-            Progress::Call(call) => {
-                let answer = self.call_host(call.clone());
-                self.run = Some(Run {
-                    id,
-                    answered_calls,
-                    call,
-                    answer,
-                });
-                None
-            }
-            Progress::Finished(value) => Some(tool::Status::Finished { value }),
-            Progress::Failed(error) => Some(tool::Status::Failed {
-                error,
-                calls: answered_calls,
-            }),
-        }
+    /// Suspends the run at `call`, its script's tool call, until the host's answer arrives.
+    fn suspend(&mut self, id: u64, answered_calls: Vec<host::Call>, call: host::Call) {
+        let answer = self.call_host(call.clone());
+        self.run = Some(Run {
+            id,
+            answered_calls,
+            call,
+            answer,
+        });
     }
 
     /// Sends `call` to the host, in a `call` span with no parent so that the span of the
@@ -217,14 +223,6 @@ impl<H: Host> Builder<H> {
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
         }
-    }
-}
-
-/// A `failed` status for a request the sandbox turned down before any script ran.
-fn reject(error: String) -> tool::Status {
-    tool::Status::Failed {
-        error,
-        calls: Vec::new(),
     }
 }
 
