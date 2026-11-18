@@ -2,7 +2,6 @@
 //! answer future clones each call's arguments and for one whose future clones only the tool id.
 //! Run it with `cargo bench --bench host_call`.
 
-use std::any::Any;
 use std::hint;
 use std::time::{Duration, Instant};
 
@@ -19,7 +18,7 @@ const CALL_COUNT: u32 = 1_000;
 const ARG_SIZES_BYTES: [usize; 3] = [100, 10_000, 1_000_000];
 
 /// How many times each script runs. The fastest run is the one reported.
-const ROUNDS: u32 = 5;
+const RUN_COUNT: u32 = 5;
 
 /// The field of a call that a [`CloneHost`] clones into each answer's future.
 #[derive(Clone, Copy, Debug)]
@@ -44,23 +43,32 @@ impl Host for CloneHost {
     }
 
     fn call(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
-        let field_clone: Box<dyn Any + Send> = match self.field {
-            CallField::Args => Box::new(call.args.clone()),
-            CallField::ToolId => Box::new(call.tool_id.clone()),
-        };
-        async move {
-            hint::black_box(field_clone);
-            Ok(Value::Null)
+        match self.field {
+            CallField::Args => {
+                let args = call.args.clone();
+                async move {
+                    hint::black_box(args);
+                    Ok(Value::Null)
+                }
+                .boxed()
+            }
+            CallField::ToolId => {
+                let tool_id = call.tool_id.clone();
+                async move {
+                    hint::black_box(tool_id);
+                    Ok(Value::Null)
+                }
+                .boxed()
+            }
         }
-        .boxed()
     }
 }
 
-/// The fastest time per call over [`ROUNDS`] scripts that each call `send` [`CALL_COUNT`] times
-/// with a `data` string of `arg_size_bytes`.
+/// The fastest time per call over [`RUN_COUNT`] scripts that each call `send` [`CALL_COUNT`]
+/// times with a `data` string of `arg_size_bytes`.
 fn measure_time_per_call(field: CallField, arg_size_bytes: usize) -> Duration {
     let script = format!("for _ in range({CALL_COUNT}):\n    send(data=payload)\n");
-    let run_times = (0..ROUNDS).map(|_| {
+    let run_times = (0..RUN_COUNT).map(|_| {
         let mut sandbox = Sandbox::builder(CloneHost { field }).build();
         expect_finished(executor::block_on(
             sandbox.execute(&format!("payload = 'x' * {arg_size_bytes}")),
@@ -71,7 +79,7 @@ fn measure_time_per_call(field: CallField, arg_size_bytes: usize) -> Duration {
         expect_finished(status);
         run_time
     });
-    run_times.min().expect("at least one round") / CALL_COUNT
+    run_times.min().expect("at least one run") / CALL_COUNT
 }
 
 /// Panics unless the script finished.
@@ -83,7 +91,7 @@ fn expect_finished(status: Status) {
 }
 
 fn main() {
-    println!("time per call over {CALL_COUNT} calls, fastest of {ROUNDS} runs");
+    println!("time per call over {CALL_COUNT} calls, fastest of {RUN_COUNT} runs");
     println!(
         "{:>12} {:>16} {:>16}",
         "arg size", "clone args", "clone tool id"
