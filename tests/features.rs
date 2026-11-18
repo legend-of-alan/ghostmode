@@ -5,6 +5,8 @@
 mod mcp;
 #[path = "steps/model.rs"]
 mod model;
+#[path = "steps/schema.rs"]
+mod schema;
 #[path = "steps/spans.rs"]
 mod spans;
 #[path = "steps/test_host.rs"]

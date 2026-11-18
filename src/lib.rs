@@ -6,6 +6,7 @@ pub mod host;
 pub mod mcp;
 mod repl;
 mod sandbox;
+pub mod schema;
 mod value;
 
 pub use sandbox::{Builder, Sandbox, Status};
