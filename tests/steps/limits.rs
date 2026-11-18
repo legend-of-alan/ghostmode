@@ -13,7 +13,7 @@ async fn time_passes(_world: &mut World, ms: u64) {
 
 #[then(
     "the default limits are 30 s of run time, 256 MiB, a recursion depth of 1000, 100 calls per \
-     execute and no call or idle timeout"
+     execute, no call or idle timeout and 40,000 output characters"
 )]
 fn defaults_are(_world: &mut World) {
     let expected = Limits {
@@ -23,6 +23,7 @@ fn defaults_are(_world: &mut World) {
         calls_per_execute: 100,
         call_timeout: None,
         idle_timeout: None,
+        output_chars: 40_000,
     };
     assert_eq!(Limits::default(), expected);
 }

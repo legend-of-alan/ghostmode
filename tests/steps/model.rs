@@ -46,3 +46,8 @@ fn wait_lasted_between(world: &mut World, least_ms: u64, under_secs: u64) {
     assert!(elapsed >= Duration::from_millis(least_ms), "{elapsed:?}");
     assert!(elapsed < Duration::from_secs(under_secs), "{elapsed:?}");
 }
+
+#[then(regex = r#"^the status's printed text is (".*")$"#)]
+fn printed_text_is(world: &mut World, printed: String) {
+    assert_eq!(world.status["printed"], parse_json(&printed));
+}
