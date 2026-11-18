@@ -5,7 +5,7 @@ Feature: The caller hands its model execute and poll as MCP tools or OpenAI func
     Then the MCP tools are `execute` and `poll`, each with a name, description and inputSchema
     And the OpenAI functions carry the same names, descriptions and schemas
 
-  Scenario: Calls built from the schemas reach execute and poll
+  Scenario: Execute and poll declare exactly the arguments their calls take
     When the model calls `execute` with {"code": "1 + 1"}
     Then the status is {"status": "finished", "value": 2}
     When the model calls `poll` with {"run_id": 1}
