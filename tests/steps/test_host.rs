@@ -28,6 +28,9 @@ pub(crate) struct TestHost {
     /// The sending halves that answer `Answer::Held` calls by tool id, from a When step to the
     /// call's future.
     pub(crate) held_calls: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    /// The input schema of each tool a Given step set one for, by tool id. Other tools take
+    /// `{"type": "object"}`.
+    pub(crate) input_schemas: HashMap<String, Value>,
 }
 
 impl Host for TestHost {
@@ -37,7 +40,11 @@ impl Host for TestHost {
             .map(|id| host::Tool {
                 id: id.clone(),
                 description: format!("The scenario's {id} tool."),
-                input_schema: serde_json::json!({"type": "object"}),
+                input_schema: self
+                    .input_schemas
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({"type": "object"})),
             })
             .collect()
     }
@@ -85,6 +92,16 @@ fn host_fails(world: &mut World, tool_id: String, message: String) {
 #[given(regex = r"^a host whose `(\w+)` answers only when told to$")]
 fn host_holds(world: &mut World, tool_id: String) {
     world.host.answers.insert(tool_id, Answer::Held);
+}
+
+#[given(regex = r"^a host whose `(\w+)` input schema is (\{.*\})$")]
+fn host_input_schema(world: &mut World, tool_id: String, input_schema: String) {
+    let host = &mut world.host;
+    host.answers
+        .entry(tool_id.clone())
+        .or_insert(Answer::Value(Value::Null));
+    host.input_schemas
+        .insert(tool_id, parse_json(&input_schema));
 }
 
 #[given(regex = r"^a sandbox whose execute wait is (\d+) ms and poll wait is (\d+) ms$")]
