@@ -6,4 +6,4 @@ mod repl;
 mod sandbox;
 mod value;
 
-pub use sandbox::{Builder, Sandbox, Status};
+pub use sandbox::{Builder, Limits, Sandbox, Status};

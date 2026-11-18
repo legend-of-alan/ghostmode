@@ -6,10 +6,11 @@ pub(crate) use monty::{MontyRepl, ReplFunctionCall};
 use monty::{ReplProgress, ReplStartError};
 use monty_types::{
     CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult, OsPolicy,
-    PrintWriter, ResourceTracker, SleepMode,
+    PrintWriter, ResourceLimits, ResourceTracker, SleepMode,
 };
 use serde_json::Value;
 
+use crate::sandbox::Limits;
 use crate::{host, value};
 
 /// Runs scripts in a Monty session whose globals persist from one script to the next. It holds
@@ -39,18 +40,22 @@ impl Repl {
         Self { tool_ids }
     }
 
-    /// An empty idle session. Every OS call gets Monty's no-handler answer, `time.sleep` returns
-    /// at once and prints are discarded.
-    pub(crate) fn new_session() -> Box<MontyRepl> {
+    /// An empty idle session that stops a script at `limits`' run time, memory and recursion
+    /// depth. Every OS call gets Monty's no-handler answer, `time.sleep` returns at once and
+    /// prints are discarded.
+    pub(crate) fn new_session(limits: &Limits) -> Box<MontyRepl> {
         let os_policy = OsPolicy {
             sleep: SleepMode::Zero,
             ..OsPolicy::default()
         };
-        let session = MontyRepl::new(
-            "script.py",
-            ResourceTracker::default(),
-            CompileOptions::default(),
-        );
+        let resource_limits = ResourceLimits {
+            max_feed_duration: Some(limits.run_time),
+            max_memory: Some(limits.memory_bytes),
+            max_recursion_depth: limits.recursion_depth,
+            ..ResourceLimits::default()
+        };
+        let tracker = ResourceTracker::new(resource_limits);
+        let session = MontyRepl::new("script.py", tracker, CompileOptions::default());
         Box::new(session.with_os_policy(os_policy))
     }
 
@@ -77,6 +82,19 @@ impl Repl {
             }
         };
         self.run(function_call.resume(answer, PrintWriter::Disabled))
+    }
+
+    /// Ends the script suspended at `function_call` with a `RuntimeError` carrying `message`,
+    /// which the script can't catch.
+    pub(crate) fn abort(&self, function_call: Box<ReplFunctionCall>, message: String) -> Progress {
+        let error = MontyException::new(ExcType::RuntimeError, Some(message));
+        self.run(function_call.abort(error, PrintWriter::Disabled))
+    }
+
+    /// Drops the script suspended at `function_call` without running it further, and gives back
+    /// its idle session with the globals the script had set.
+    pub(crate) fn abandon(function_call: Box<ReplFunctionCall>) -> Box<MontyRepl> {
+        Box::new(function_call.into_repl())
     }
 
     /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.

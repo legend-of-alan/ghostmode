@@ -109,6 +109,19 @@ fn span_has_no_parent(world: &mut World, name: String) {
     assert!(opened.all(|span| !span.has_parent), "{spans:?}");
 }
 
+#[then(regex = r"^the (\w+) span's `(\w+)` equals the (\w+) span's$")]
+fn span_field_equals(world: &mut World, name: String, field: String, other: String) {
+    let spans = world.span_capture.spans();
+    let field_value = |name: &str| {
+        let span = spans.iter().find(|span| span.name == name);
+        let span = span.unwrap_or_else(|| panic!("no {name} span"));
+        let value = span.fields.iter().rev().find(|(key, _)| *key == field);
+        value.map(|(_, value)| value.clone())
+    };
+    let value = field_value(&name).unwrap_or_else(|| panic!("{name} has no {field}"));
+    assert_eq!(Some(value), field_value(&other));
+}
+
 #[then(regex = r#"^no captured span field holds "(.+)"$"#)]
 fn no_field_holds(world: &mut World, text: String) {
     for span in world.span_capture.spans() {
