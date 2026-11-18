@@ -104,7 +104,7 @@ fn sandbox_limit(world: &mut World, field: String, number: usize, unit: String) 
         ("calls_per_execute", "") => limits.calls_per_execute = number,
         ("call_timeout", " ms") => limits.call_timeout = Some(millis),
         ("idle_timeout", " ms") => limits.idle_timeout = Some(millis),
-        _ => panic!("no limit `{field}` in{unit}"),
+        _ => panic!("no limit `{field}` with unit `{}`", unit.trim()),
     }
 }
 
