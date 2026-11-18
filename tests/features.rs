@@ -20,12 +20,13 @@ use tracing::instrument::WithSubscriber;
 #[derive(Default, cucumber::World)]
 struct World {
     host: test_host::TestHost,
-    waits: Option<(Duration, Duration)>,
+    execute_wait: Option<Duration>,
+    poll_wait: Option<Duration>,
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
-    waited: Duration,
+    elapsed: Duration,
     dispatch: Dispatch,
-    captured: spans::Captured,
+    span_capture: spans::SpanCapture,
 }
 
 impl fmt::Debug for World {
@@ -34,7 +35,7 @@ impl fmt::Debug for World {
     }
 }
 
-/// One of the model's two tool calls.
+/// One of the model's two tool calls, from a When step to the sandbox.
 enum Request {
     Execute(tool::Execute),
     Poll(tool::Poll),
@@ -46,11 +47,14 @@ impl World {
     /// in `tokio::spawn`, so a sandbox future that is not `Send` fails the build.
     async fn send(&mut self, request: Request) {
         let mut sandbox = self.sandbox.take().unwrap_or_else(|| {
-            let builder = Sandbox::builder(self.host.clone());
-            match self.waits {
-                Some((execute, poll)) => builder.execute_wait(execute).poll_wait(poll).build(),
-                None => builder.build(),
+            let mut builder = Sandbox::builder(self.host.clone());
+            if let Some(wait) = self.execute_wait {
+                builder = builder.execute_wait(wait);
             }
+            if let Some(wait) = self.poll_wait {
+                builder = builder.poll_wait(wait);
+            }
+            builder.build()
         });
         let answer = async move {
             let status = match request {
@@ -68,7 +72,7 @@ impl World {
         } else {
             answer.await
         };
-        self.waited = started.elapsed();
+        self.elapsed = started.elapsed();
         self.sandbox = Some(sandbox);
         self.status = serde_json::to_value(status).expect("status serializes");
     }

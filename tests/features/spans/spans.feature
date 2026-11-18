@@ -1,6 +1,6 @@
 Feature: Spans carry ids, statuses, durations and counts, never a script's data
 
-  Scenario: A script's source, arguments and result never reach a span
+  Scenario: Execute and call spans hold only ids, statuses, durations and counts, and a call span has no parent
     Given a host whose `search` answers {"hits": ["secret-hit"]}
     And a subscriber that captures every span
     When the model executes search(query="secret-query")["hits"]

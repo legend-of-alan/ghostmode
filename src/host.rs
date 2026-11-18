@@ -35,7 +35,7 @@ pub struct Call {
     pub args: Map<String, Value>,
 }
 
-/// Why the host answered a call with no value.
+/// Why the host answered a call with no value, from the host to the script.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     /// The host would not run the call. The script sees a `PermissionError` with this reason.

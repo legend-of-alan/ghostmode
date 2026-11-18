@@ -10,9 +10,9 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::World;
 
-/// Every span a capturing subscriber saw, shared with the subscriber.
+/// A tracing layer that keeps every span it sees, shared between the subscriber and the steps.
 #[derive(Clone, Default)]
-pub(crate) struct Captured(Arc<Mutex<Vec<CapturedSpan>>>);
+pub(crate) struct SpanCapture(Arc<Mutex<Vec<CapturedSpan>>>);
 
 /// One span: its id, its name, whether it has a parent, and each field it recorded.
 #[derive(Clone, Debug)]
@@ -23,7 +23,7 @@ pub(crate) struct CapturedSpan {
     pub(crate) fields: Vec<(String, String)>,
 }
 
-impl Captured {
+impl SpanCapture {
     fn spans(&self) -> Vec<CapturedSpan> {
         self.0.lock().expect("captured spans").clone()
     }
@@ -39,7 +39,7 @@ impl Visit for FieldVisitor<'_> {
     }
 }
 
-impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Captured {
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SpanCapture {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let has_parent = if attrs.is_contextual() {
             ctx.current_span().id().is_some()
@@ -65,14 +65,14 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Captured {
 
 #[given("a subscriber that captures every span")]
 fn capture_every_span(world: &mut World) {
-    let subscriber = tracing_subscriber::registry().with(world.captured.clone());
+    let subscriber = tracing_subscriber::registry().with(world.span_capture.clone());
     world.dispatch = Dispatch::new(subscriber);
 }
 
 #[then(regex = r"^the captured spans are (\w+) and (\w+)$")]
 fn captured_spans_are(world: &mut World, first: String, second: String) {
     let mut names: Vec<String> = world
-        .captured
+        .span_capture
         .spans()
         .into_iter()
         .map(|span| span.name)
@@ -90,7 +90,7 @@ fn captured_fields_are_only(world: &mut World, allowed: String) {
         .split([',', ' '])
         .filter(|word| !word.is_empty() && *word != "and")
         .collect();
-    for span in world.captured.spans() {
+    for span in world.span_capture.spans() {
         for (field, _) in &span.fields {
             assert!(
                 allowed.contains(&field.as_str()),
@@ -103,7 +103,7 @@ fn captured_fields_are_only(world: &mut World, allowed: String) {
 
 #[then(regex = r"^the (\w+) span has no parent$")]
 fn span_has_no_parent(world: &mut World, name: String) {
-    let spans = world.captured.spans();
+    let spans = world.span_capture.spans();
     let mut opened = spans.iter().filter(|span| span.name == name).peekable();
     assert!(opened.peek().is_some(), "no {name} span");
     assert!(opened.all(|span| !span.has_parent), "{spans:?}");
@@ -111,7 +111,7 @@ fn span_has_no_parent(world: &mut World, name: String) {
 
 #[then(regex = r#"^no captured span field holds "(.+)"$"#)]
 fn no_field_holds(world: &mut World, text: String) {
-    for span in world.captured.spans() {
+    for span in world.span_capture.spans() {
         for (field, value) in &span.fields {
             assert!(!value.contains(&text), "{}.{field} = {value}", span.name);
         }

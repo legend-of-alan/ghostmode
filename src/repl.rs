@@ -1,9 +1,6 @@
 //! The Python session a sandbox runs scripts in. This is the only module that talks to Monty.
 
 use monty::{MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError};
-
-/// What Monty's `feed_start` and `resume` return.
-type MontyProgress = Result<ReplProgress, Box<ReplStartError>>;
 use monty_types::{
     CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult, OsPolicy,
     PrintWriter, ResourceTracker, SleepMode,
@@ -12,19 +9,23 @@ use serde_json::Value;
 
 use crate::{host, value};
 
+/// What Monty's `feed_start` and `resume` return.
+type MontyProgress = Result<ReplProgress, Box<ReplStartError>>;
+
 /// A Python session whose globals persist from one script to the next. A script that calls a
-/// tool stops at the call until [`Repl::resume`] gives the host's answer.
+/// tool suspends at the call until [`Repl::resume`] gives the host's answer.
 pub(crate) struct Repl {
     tool_ids: Vec<String>,
-    state: Option<State>,
+    session: Option<Session>,
 }
 
-enum State {
+/// Where the session is: idle between scripts, or suspended at a tool call.
+enum Session {
     Idle(Box<MontyRepl>),
-    Calling(Box<ReplFunctionCall>),
+    Suspended(Box<ReplFunctionCall>),
 }
 
-/// How far a script got: to a tool call it waits on, or to its end.
+/// How far a script got, from the repl to the sandbox: to a tool call it waits on, or to its end.
 pub(crate) enum Progress {
     Call(host::Call),
     Finished(Value),
@@ -47,7 +48,7 @@ impl Repl {
         .with_os_policy(os_policy);
         Self {
             tool_ids,
-            state: Some(State::Idle(Box::new(repl))),
+            session: Some(Session::Idle(Box::new(repl))),
         }
     }
 
@@ -56,7 +57,7 @@ impl Repl {
     /// # Panics
     /// If a script is still waiting on a tool call.
     pub(crate) fn feed_start(&mut self, code: &str) -> Progress {
-        let Some(State::Idle(repl)) = self.state.take() else {
+        let Some(Session::Idle(repl)) = self.session.take() else {
             panic!("feed_start while a script waits on a tool call");
         };
         let progress = (*repl).feed_start(code, Vec::new(), PrintWriter::Disabled);
@@ -68,7 +69,7 @@ impl Repl {
     /// # Panics
     /// If no script waits on a tool call.
     pub(crate) fn resume(&mut self, answer: Result<Value, host::Error>) -> Progress {
-        let Some(State::Calling(call)) = self.state.take() else {
+        let Some(Session::Suspended(call)) = self.session.take() else {
             panic!("resume while no script waits on a tool call");
         };
         let answer = match answer {
@@ -89,11 +90,11 @@ impl Repl {
         loop {
             progress = match progress {
                 Err(failure) => {
-                    self.state = Some(State::Idle(Box::new(failure.repl)));
+                    self.session = Some(Session::Idle(Box::new(failure.repl)));
                     return Progress::Failed(failure.error.to_string());
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
-                    self.state = Some(State::Idle(Box::new(repl)));
+                    self.session = Some(Session::Idle(Box::new(repl)));
                     return Progress::Finished(value::to_json(value.as_ref()));
                 }
                 Ok(ReplProgress::FunctionCall(call))
@@ -113,7 +114,7 @@ impl Repl {
                             tool_id: call.function_name.clone(),
                             args: args.collect(),
                         };
-                        self.state = Some(State::Calling(Box::new(call)));
+                        self.session = Some(Session::Suspended(Box::new(call)));
                         return Progress::Call(tool_call);
                     }
                 }

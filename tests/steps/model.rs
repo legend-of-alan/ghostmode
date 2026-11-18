@@ -41,18 +41,9 @@ fn failed_status_lists_calls(world: &mut World, calls: String) {
     assert_eq!(world.status["calls"], parse_json(&calls));
 }
 
-#[then(regex = r"^the model waited at least (\d+) seconds$")]
-fn waited_at_least(world: &mut World, secs: u64) {
-    assert!(
-        world.waited >= Duration::from_secs(secs),
-        "{:?}",
-        world.waited
-    );
-}
-
 #[then(regex = r"^the model waited at least (\d+) ms but under (\d+) seconds$")]
-fn waited_between(world: &mut World, least_ms: u64, under_secs: u64) {
-    let waited = world.waited;
-    assert!(waited >= Duration::from_millis(least_ms), "{waited:?}");
-    assert!(waited < Duration::from_secs(under_secs), "{waited:?}");
+fn wait_lasted_between(world: &mut World, least_ms: u64, under_secs: u64) {
+    let elapsed = world.elapsed;
+    assert!(elapsed >= Duration::from_millis(least_ms), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(under_secs), "{elapsed:?}");
 }

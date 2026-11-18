@@ -39,24 +39,13 @@ struct Run {
 }
 
 impl<H: Host> Sandbox<H> {
-    /// A builder for a sandbox whose scripts call `host`'s tools. `execute` waits 30 s and
-    /// `poll` waits 10 s unless the builder sets them.
+    /// A builder for a sandbox whose scripts call `host`'s tools.
     pub fn builder(host: H) -> Builder<H> {
         Builder {
             host,
             execute_wait: Duration::from_secs(30),
             poll_wait: Duration::from_secs(10),
         }
-    }
-
-    /// How long `execute` waits for a script before it answers `running`.
-    pub fn execute_wait(&self) -> Duration {
-        self.execute_wait
-    }
-
-    /// How long `poll` waits for a running script before it answers `running` again.
-    pub fn poll_wait(&self) -> Duration {
-        self.poll_wait
     }
 
     /// Runs a script for up to the execute wait. A script that fails is a `failed` status,
@@ -176,8 +165,7 @@ impl<H: Host> Sandbox<H> {
         });
     }
 
-    /// Sends `call` to the host, in a `call` span with no parent so that the span of the
-    /// `execute` or `poll` that made it closes when that tool call answers.
+    /// Sends `call` to the host and traces its answer in a `call` span with no parent.
     fn call_host(&self, call: host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
         let span = tracing::info_span!(parent: None, "call", tool_id = %call.tool_id, status = Empty, duration = Empty);
         let answer = self.host.call(call);
@@ -200,13 +188,14 @@ impl<H: Host> Sandbox<H> {
 }
 
 impl<H: Host> Builder<H> {
-    /// How long `execute` waits for a script before it answers `running`.
+    /// How long `execute` waits for a script before it answers `running`. The default is 30 s.
     pub fn execute_wait(mut self, wait: Duration) -> Self {
         self.execute_wait = wait;
         self
     }
 
-    /// How long `poll` waits for a running script before it answers `running` again.
+    /// How long `poll` waits for a running script before it answers `running` again. The
+    /// default is 10 s.
     pub fn poll_wait(mut self, wait: Duration) -> Self {
         self.poll_wait = wait;
         self
