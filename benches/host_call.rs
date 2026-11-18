@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use futures::executor;
 use futures::future::{BoxFuture, FutureExt};
 use ghostmode::host::{self, Host};
-use ghostmode::{Sandbox, Status};
+use ghostmode::{Limits, Sandbox, Status};
 use serde_json::Value;
 
 /// How many tool calls each timed script makes.
@@ -69,7 +69,11 @@ impl Host for CloneHost {
 fn measure_time_per_call(field: CallField, arg_size_bytes: usize) -> Duration {
     let script = format!("for _ in range({CALL_COUNT}):\n    send(data=payload)\n");
     let run_times = (0..RUN_COUNT).map(|_| {
-        let mut sandbox = Sandbox::builder(CloneHost { field }).build();
+        let limits = Limits {
+            calls_per_execute: CALL_COUNT as usize,
+            ..Limits::default()
+        };
+        let mut sandbox = Sandbox::builder(CloneHost { field }).limits(limits).build();
         expect_finished(executor::block_on(
             sandbox.execute(&format!("payload = 'x' * {arg_size_bytes}")),
         ));
