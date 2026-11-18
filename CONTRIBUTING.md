@@ -11,10 +11,12 @@ A contributor license agreement (CLA) and a developer certificate of origin (DCO
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked --all-features -- -D warnings
 cargo test --locked
+cargo test --locked --all-features
 ```
 
-CI also fails on a runtime call or a print in `src`, a plain comment in `src` or `tests`, a touched name that breaks Naming rule 8, and a dependency without a permissive license. Pull requests only run CI on Linux. Pushes to main also run it on macOS and Windows.
+CI also fails on a runtime call or a print in `src`, tokio in the default build's dependency tree, a plain comment in `src` or `tests`, a touched name that breaks Naming rule 8, and a dependency without a permissive license. Pull requests only run CI on Linux. Pushes to main also run it on macOS and Windows.
 
 ## Issues and PRs
 
