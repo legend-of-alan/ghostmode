@@ -1,5 +1,6 @@
 //! The sandbox that answers the model's `execute` and `poll` tool calls.
 
+use std::mem;
 use std::time::{Duration, Instant};
 
 use futures_timer::Delay;
@@ -53,6 +54,12 @@ pub struct Limits {
     /// How long a run that `execute` or `poll` left `running` may wait for the next `execute` or
     /// `poll` before it expires. The default is unset, no limit.
     pub idle_timeout: Option<Duration>,
+    /// How many characters of output a status carries: a finished value or an error, together
+    /// with what the script printed. Output over it keeps its head and tail around a marker
+    /// such as `[… 60,000 of 100,000 characters cut …]`, and a value cut this way becomes a
+    /// string. A value is counted as its JSON text, except a string, which is counted as its
+    /// own text. The default is 40,000.
+    pub output_chars: usize,
 }
 
 /// What `execute` or `poll` answers, from the sandbox to the model. It serializes as the JSON
@@ -64,6 +71,9 @@ pub enum Status {
     Finished {
         /// The value as JSON.
         value: Value,
+        /// What the script printed, if it printed anything.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        printed: Option<String>,
     },
     /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
     Running {
@@ -74,8 +84,13 @@ pub enum Status {
     Failed {
         /// What went wrong, such as the script's traceback.
         error: String,
-        /// The tool calls the host answered before the failure.
+        /// The tool calls the host answered before the failure. Each argument is cut to its
+        /// share of [`Limits::output_chars`], which is `output_chars / calls_per_execute`.
         calls: Vec<host::Call>,
+        /// What the script printed before the failure, if it printed anything. A print that
+        /// would take the script's prints past 10 MiB raises `MemoryError` in the script.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        printed: Option<String>,
     },
 }
 
@@ -89,6 +104,7 @@ enum State {
 struct Run {
     id: u64,
     answered_calls: Vec<host::Call>,
+    printed: String,
     call: host::Call,
     function_call: Box<ReplFunctionCall>,
     /// The host's answer to `call`, or `None` once the call timeout passes first.
@@ -105,6 +121,7 @@ impl Default for Limits {
             calls_per_execute: 100,
             call_timeout: None,
             idle_timeout: None,
+            output_chars: 40_000,
         }
     }
 }
@@ -146,14 +163,16 @@ impl<H: Host> Sandbox<H> {
                     return Status::Failed {
                         error,
                         calls: Vec::new(),
+                        printed: None,
                     };
                 }
             };
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            let progress = self.repl.feed_start(session, code);
-            if let Some(status) = self.suspend_or_end(id, Vec::new(), progress) {
+            let mut printed = String::new();
+            let progress = self.repl.feed_start(session, code, &mut printed);
+            if let Some(status) = self.suspend_or_end(id, Vec::new(), printed, progress) {
                 return status;
             }
             self.wait_timeout(self.execute_wait).await
@@ -180,6 +199,7 @@ impl<H: Host> Sandbox<H> {
                 return Status::Failed {
                     error,
                     calls: Vec::new(),
+                    printed: None,
                 };
             }
             match self.expire_idle_run() {
@@ -216,22 +236,23 @@ impl<H: Host> Sandbox<H> {
             let Run {
                 id,
                 mut answered_calls,
+                mut printed,
                 call,
                 function_call,
                 ..
             } = run;
             let progress = match answer {
                 Some(answer) => {
-                    answered_calls.push(call);
+                    answered_calls.push(self.cut_args(call));
                     Span::current().record("call_count", answered_calls.len());
-                    self.repl.resume(function_call, answer)
+                    self.repl.resume(function_call, answer, &mut printed)
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    self.repl.abort(function_call, message)
+                    self.repl.abort(function_call, message, &mut printed)
                 }
             };
-            if let Some(status) = self.suspend_or_end(id, answered_calls, progress) {
+            if let Some(status) = self.suspend_or_end(id, answered_calls, printed, progress) {
                 return status;
             }
         }
@@ -243,6 +264,7 @@ impl<H: Host> Sandbox<H> {
         &mut self,
         id: u64,
         answered_calls: Vec<host::Call>,
+        mut printed: String,
         mut progress: Progress,
     ) -> Option<Status> {
         let call_limit = self.limits.calls_per_execute;
@@ -250,7 +272,7 @@ impl<H: Host> Sandbox<H> {
             && let Progress::Call { function_call, .. } = progress
         {
             let message = format!("the script reached the call limit of {call_limit}");
-            progress = self.repl.abort(function_call, message);
+            progress = self.repl.abort(function_call, message, &mut printed);
         }
         match progress {
             Progress::Call {
@@ -261,6 +283,7 @@ impl<H: Host> Sandbox<H> {
                 self.state = Some(State::Suspended(Run {
                     id,
                     answered_calls,
+                    printed,
                     call,
                     function_call,
                     answer,
@@ -269,7 +292,7 @@ impl<H: Host> Sandbox<H> {
                 None
             }
             Progress::Ended { result, session } => {
-                Some(self.end_run(session, result, answered_calls))
+                Some(self.end_run(session, result, answered_calls, printed))
             }
         }
     }
@@ -286,24 +309,48 @@ impl<H: Host> Sandbox<H> {
         };
         let session = Repl::abandon(run.function_call);
         let error = format!("run {} expired", run.id);
-        Some(self.end_run(session, Err(error), run.answered_calls))
+        Some(self.end_run(session, Err(error), run.answered_calls, run.printed))
     }
 
-    /// Ends the run: `session` is idle again, and the script's result becomes the status.
+    /// Ends the run: `session` is idle again, and the script's result and what it printed become
+    /// the status, cut to share [`Limits::output_chars`].
     fn end_run(
         &mut self,
         session: Box<MontyRepl>,
         result: Result<Value, String>,
         answered_calls: Vec<host::Call>,
+        printed: String,
     ) -> Status {
         self.state = Some(State::Idle(session));
+        let result_chars = match &result {
+            Ok(value) => count_chars(value),
+            Err(error) => error.chars().count(),
+        };
+        let printed_chars = printed.chars().count();
+        let (result_share, printed_share) =
+            split_budget(self.limits.output_chars, result_chars, printed_chars);
+        let printed = (!printed.is_empty()).then(|| cut_text(printed, printed_share));
         match result {
-            Ok(value) => Status::Finished { value },
+            Ok(value) => Status::Finished {
+                value: cut_value(value, result_share),
+                printed,
+            },
             Err(error) => Status::Failed {
-                error,
+                error: cut_text(error, result_share),
                 calls: answered_calls,
+                printed,
             },
         }
+    }
+
+    /// `call` with each argument cut to its share of [`Limits::output_chars`], which is
+    /// `output_chars / calls_per_execute`.
+    fn cut_args(&self, mut call: host::Call) -> host::Call {
+        let share = self.limits.output_chars / self.limits.calls_per_execute.max(1);
+        for value in call.args.values_mut() {
+            *value = cut_value(mem::take(value), share);
+        }
+        call
     }
 
     /// Sends `call`, made by run `run_id`, to the host and traces its answer in a `call` span
@@ -383,6 +430,80 @@ impl Status {
             Self::Failed { .. } => "failed",
         }
     }
+}
+
+/// How many characters `value` counts for against [`Limits::output_chars`]: a string's own
+/// text, or any other value's JSON text.
+fn count_chars(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.chars().count(),
+        other => other.to_string().chars().count(),
+    }
+}
+
+/// `value`, or if [`count_chars`] finds it longer than `max_chars`, its text cut by [`cut_text`]
+/// as a string.
+fn cut_value(value: Value, max_chars: usize) -> Value {
+    match value {
+        Value::String(text) => Value::String(cut_text(text, max_chars)),
+        other => {
+            let text = other.to_string();
+            if text.chars().count() <= max_chars {
+                other
+            } else {
+                Value::String(cut_text(text, max_chars))
+            }
+        }
+    }
+}
+
+/// `text`, or if it is longer than `max_chars` characters, its first and last characters, up to
+/// `max_chars` in all, around a marker such as `[… 60,000 of 100,000 characters cut …]`.
+fn cut_text(text: String, max_chars: usize) -> String {
+    let total = text.chars().count();
+    if total <= max_chars {
+        return text;
+    }
+    let tail_chars = max_chars / 2;
+    let head_end = text
+        .char_indices()
+        .nth(max_chars - tail_chars)
+        .map_or(text.len(), |(byte, _)| byte);
+    let tail_start = text
+        .char_indices()
+        .rev()
+        .take(tail_chars)
+        .last()
+        .map_or(text.len(), |(byte, _)| byte);
+    let head = &text[..head_end];
+    let tail = &text[tail_start..];
+    let cut_count = group_thousands(total - max_chars);
+    let total_count = group_thousands(total);
+    format!("{head}[… {cut_count} of {total_count} characters cut …]{tail}")
+}
+
+/// `number` in digits with a comma between each group of three, such as `100,000`.
+fn group_thousands(number: usize) -> String {
+    let digits = number.to_string();
+    let mut grouped = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
+/// How many of `budget` characters a run's result and its prints each get, as
+/// `(result_share, printed_share)`. Each gets what it needs, and when both need more, they
+/// split the budget evenly.
+fn split_budget(budget: usize, result_chars: usize, printed_chars: usize) -> (usize, usize) {
+    let printed_share = budget
+        .saturating_sub(result_chars)
+        .max(budget / 2)
+        .min(printed_chars);
+    (budget - printed_share, printed_share)
 }
 
 /// Records on `span` the status a traced step ended with and how long it took since `started`.

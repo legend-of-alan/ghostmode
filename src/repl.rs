@@ -41,8 +41,8 @@ impl Repl {
     }
 
     /// An empty idle session that stops a script at `limits`' run time, memory and recursion
-    /// depth. Every OS call gets Monty's no-handler answer, `time.sleep` returns at once and
-    /// prints are discarded.
+    /// depth. Every OS call gets Monty's no-handler answer, and `time.sleep` returns at
+    /// once.
     pub(crate) fn new_session(limits: &Limits) -> Box<MontyRepl> {
         let os_policy = OsPolicy {
             sleep: SleepMode::Zero,
@@ -59,17 +59,25 @@ impl Repl {
         Box::new(session.with_os_policy(os_policy))
     }
 
-    /// Feeds `code` to the idle `session` and runs it.
-    pub(crate) fn feed_start(&self, session: Box<MontyRepl>, code: &str) -> Progress {
-        let monty_progress = session.feed_start(code, Vec::new(), PrintWriter::Disabled);
-        self.run(monty_progress)
+    /// Feeds `code` to the idle `session` and runs it, adding what it prints to `printed`.
+    pub(crate) fn feed_start(
+        &self,
+        session: Box<MontyRepl>,
+        code: &str,
+        printed: &mut String,
+    ) -> Progress {
+        let monty_progress =
+            session.feed_start(code, Vec::new(), PrintWriter::collect_string(printed));
+        self.run(monty_progress, printed)
     }
 
-    /// Answers the tool call a script is suspended at, and runs on.
+    /// Answers the tool call a script is suspended at, and runs on, adding what it prints to
+    /// `printed`.
     pub(crate) fn resume(
         &self,
         function_call: Box<ReplFunctionCall>,
         answer: Result<Value, host::Error>,
+        printed: &mut String,
     ) -> Progress {
         let answer = match answer {
             Ok(answer) => ExtFunctionResult::Return(value::from_json(&answer)),
@@ -81,14 +89,21 @@ impl Repl {
                 ExtFunctionResult::Error(MontyException::new(ExcType::RuntimeError, Some(message)))
             }
         };
-        self.run(function_call.resume(answer, PrintWriter::Disabled))
+        let monty_progress = function_call.resume(answer, PrintWriter::collect_string(printed));
+        self.run(monty_progress, printed)
     }
 
     /// Ends the script suspended at `function_call` with a `RuntimeError` carrying `message`,
-    /// which the script can't catch.
-    pub(crate) fn abort(&self, function_call: Box<ReplFunctionCall>, message: String) -> Progress {
+    /// which the script can't catch, adding what it prints to `printed`.
+    pub(crate) fn abort(
+        &self,
+        function_call: Box<ReplFunctionCall>,
+        message: String,
+        printed: &mut String,
+    ) -> Progress {
         let error = MontyException::new(ExcType::RuntimeError, Some(message));
-        self.run(function_call.abort(error, PrintWriter::Disabled))
+        let monty_progress = function_call.abort(error, PrintWriter::collect_string(printed));
+        self.run(monty_progress, printed)
     }
 
     /// Drops the script suspended at `function_call` without running it further, and gives back
@@ -99,8 +114,13 @@ impl Repl {
 
     /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.
     /// Every other suspension is answered here: an unknown name raises `NameError`, an OS call
-    /// gets Monty's no-handler answer, and awaiting a tool raises `RuntimeError`.
-    fn run(&self, mut monty_progress: Result<ReplProgress, Box<ReplStartError>>) -> Progress {
+    /// gets Monty's no-handler answer, and awaiting a tool raises `RuntimeError`. What the script
+    /// prints is added to `printed`.
+    fn run(
+        &self,
+        mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
+        printed: &mut String,
+    ) -> Progress {
         loop {
             monty_progress = match monty_progress {
                 Err(failure) => {
@@ -125,7 +145,10 @@ impl Repl {
                             function_call.function_name
                         );
                         let error = MontyException::new(ExcType::TypeError, Some(message));
-                        function_call.resume(ExtFunctionResult::Error(error), PrintWriter::Disabled)
+                        function_call.resume(
+                            ExtFunctionResult::Error(error),
+                            PrintWriter::collect_string(printed),
+                        )
                     } else {
                         let args = function_call.args.kwargs().map(|(key, value)| {
                             let key = key.as_str().expect("kwargs keys are str").to_string();
@@ -145,18 +168,19 @@ impl Repl {
                 Ok(ReplProgress::FunctionCall(mut function_call)) => {
                     let answer =
                         ExtFunctionResult::NotFound(mem::take(&mut function_call.function_name));
-                    function_call.resume(answer, PrintWriter::Disabled)
+                    function_call.resume(answer, PrintWriter::collect_string(printed))
                 }
-                Ok(ReplProgress::NameLookup(lookup)) => {
-                    lookup.resume(NameLookupResult::Undefined, PrintWriter::Disabled)
-                }
+                Ok(ReplProgress::NameLookup(lookup)) => lookup.resume(
+                    NameLookupResult::Undefined,
+                    PrintWriter::collect_string(printed),
+                ),
                 Ok(ReplProgress::OsCall(os_call)) => {
                     let answer = os_call.function_call.no_handler_result();
-                    os_call.resume(answer, PrintWriter::Disabled)
+                    os_call.resume(answer, PrintWriter::collect_string(printed))
                 }
                 Ok(ReplProgress::ResolveFutures(futures)) => {
                     let error = MontyException::runtime_error("tools are not awaitable");
-                    futures.abort(error, PrintWriter::Disabled)
+                    futures.abort(error, PrintWriter::collect_string(printed))
                 }
             };
         }

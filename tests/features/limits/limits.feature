@@ -79,4 +79,4 @@ Feature: Limits stop a script, and the session keeps its variables
     Then the status is {"status": "finished", "value": 1}
 
   Scenario: The default limits are the design's
-    Then the default limits are 30 s of run time, 256 MiB, a recursion depth of 1000, 100 calls per execute and no call or idle timeout
+    Then the default limits are 30 s of run time, 256 MiB, a recursion depth of 1000, 100 calls per execute, no call or idle timeout and 40,000 output characters
