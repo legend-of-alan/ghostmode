@@ -152,10 +152,7 @@ impl World {
     /// keeps how long the request waited. On a Tokio multi-thread runtime the call runs in
     /// `tokio::spawn`, so a sandbox future that is not `Send` fails the build.
     async fn send(&mut self, request: Request) {
-        let mut sandbox = match self.sandbox.take() {
-            Some(sandbox) => sandbox,
-            None => self.new_sandbox(None).await.expect("a new sandbox"),
-        };
+        let mut sandbox = self.take_sandbox().await;
         let answer = async move {
             let reply = sandbox.reply(request).await;
             (sandbox, reply)
@@ -179,6 +176,14 @@ impl World {
             Reply::Reset => {}
             Reply::Dump(Ok(bytes)) => self.dump = Some(bytes),
             Reply::Dump(Err(error)) => self.caller_error = Some(error),
+        }
+    }
+
+    /// Takes the scenario's sandbox out of the world, building it if there is none yet.
+    async fn take_sandbox(&mut self) -> Box<dyn AnySandbox> {
+        match self.sandbox.take() {
+            Some(sandbox) => sandbox,
+            None => self.new_sandbox(None).await.expect("a new sandbox"),
         }
     }
 
