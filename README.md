@@ -26,7 +26,7 @@ The script runs inside your process. The model only gets the last 500 characters
 - **API bills up to 70% lower.** Across eight models, code mode cut cost by 70.6% for GPT-5.4 and 40.7% on average ([benchmark](https://www.ijcaonline.org/archives/volume187/number136/mbat-ijca-2026-e10508249e55.pdf)). Intermediate results never reach the model, so you aren't billed for them as input on every later step.
 - **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
 
-> Savings depend on the model. In that benchmark, weaker models retried failed scripts until some runs cost more than plain tool calls, and Gemini models passed fewer tasks. A [pre-registered study](https://arxiv.org/abs/2611.19123) measured 70% to 90% fewer tokens with three open-weight models. In Ghost Mode, the `Limits` you build the `Sandbox` with cap how much any one result can add, 40,000 characters by default.
+> Savings depend on the model. In the eight-model benchmark, weaker models retried failed scripts until some runs cost more than plain tool calls, and Gemini models passed fewer tasks. A [pre-registered study](https://arxiv.org/abs/2611.19123) measured 70% to 90% fewer tokens with three open-weight models. In Ghost Mode, the `Limits` you build the `Sandbox` with cap how much any one result can add, 40,000 characters by default.
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
