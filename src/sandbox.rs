@@ -432,8 +432,8 @@ impl Status {
     }
 }
 
-/// How many characters `value` takes in the model's JSON: a string's own text, or any other
-/// value's JSON text.
+/// How many characters `value` counts for against [`Limits::output_chars`]: a string's own
+/// text, or any other value's JSON text.
 fn count_chars(value: &Value) -> usize {
     match value {
         Value::String(text) => text.chars().count(),
@@ -446,8 +446,14 @@ fn count_chars(value: &Value) -> usize {
 fn cut_value(value: Value, max_chars: usize) -> Value {
     match value {
         Value::String(text) => Value::String(cut_text(text, max_chars)),
-        other if count_chars(&other) <= max_chars => other,
-        other => Value::String(cut_text(other.to_string(), max_chars)),
+        other => {
+            let text = other.to_string();
+            if text.chars().count() <= max_chars {
+                other
+            } else {
+                Value::String(cut_text(text, max_chars))
+            }
+        }
     }
 }
 
@@ -459,13 +465,18 @@ fn cut_text(text: String, max_chars: usize) -> String {
         return text;
     }
     let tail_chars = max_chars / 2;
-    let byte_at = |char_index| {
-        text.char_indices()
-            .nth(char_index)
-            .map_or(text.len(), |(byte, _)| byte)
-    };
-    let head = &text[..byte_at(max_chars - tail_chars)];
-    let tail = &text[byte_at(total - tail_chars)..];
+    let head_end = text
+        .char_indices()
+        .nth(max_chars - tail_chars)
+        .map_or(text.len(), |(byte, _)| byte);
+    let tail_start = text
+        .char_indices()
+        .rev()
+        .take(tail_chars)
+        .last()
+        .map_or(text.len(), |(byte, _)| byte);
+    let head = &text[..head_end];
+    let tail = &text[tail_start..];
     let cut_count = group_thousands(total - max_chars);
     let total_count = group_thousands(total);
     format!("{head}[… {cut_count} of {total_count} characters cut …]{tail}")
