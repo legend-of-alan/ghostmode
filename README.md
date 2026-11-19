@@ -9,9 +9,9 @@ Let your agent write code instead of making tool calls one at a time. The core i
 
 ## Why Code Mode
 
-Normal tool calling is like grocery shopping over the phone. "What's in the dairy aisle?" Your friend reads you all forty items. "Grab the oat milk." "They're out." "Fine, almond." Every answer goes through you, even the ones you just pass along. With an agent, "you" is the model, and every one of those answers costs tokens and a round trip.
+Normal tool calling is like giving someone directions one turn at a time. Code Mode hands them the whole route.
 
-Code Mode hands your friend a list instead: oat milk, almond if they're out, text me the total. In Ghost Mode the model writes that list as a short Python script. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
+With normal tool calls, the model calls one tool, reads the whole result, then calls the next. Every result goes through the model, and each one costs tokens and a round trip. In Ghost Mode the model writes a short Python script instead. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
 
 That adds up fast:
 
