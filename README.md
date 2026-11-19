@@ -5,33 +5,30 @@
 
 > Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
 
-Ghost Mode is a Rust library for agents. It lets the model write one short Python script instead of making tool calls one at a time. The script calls your tools, and only its result goes back to the model.
+Ghost Mode is a Rust library implementing Code Mode for agents. Traditional tool calls send all tool call results back to the LLM to request the next set of tool calls. Ghost Mode lets the LLM write a simple python script to combine tool calls -- intermediate results never get get sent back to the LLM. 
 
-Say the model needs the open issues for two people. With normal tool calls, it calls `list_issues` twice and reads every full result. With Ghost Mode, it sends one script:
+Think about it like this: Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list. 
+
+Say the model needs to know why a pull request's checks failed. Each step needs the one before it. The pull request gives the commit, the commit gives the check runs, and each failed run gives a log. With normal tool calls, that's a round trip to the LLM per step, and every full result goes through the model. With Ghost Mode, the model sends one script:
 
 ```python
-issues = []
-for person in ["ana", "ben"]:
-    issues += list_issues(assignee=person, state="open")
-[issue["title"] for issue in issues]
+pr = get_pull_request(number=42)
+runs = list_check_runs(commit=pr["head_sha"])
+failed = [run for run in runs if run["conclusion"] == "failure"]
+[{"check": run["name"], "log": get_log(run_id=run["id"])[-500:]} for run in failed]
 ```
 
-The script runs in your process. Each `list_issues` call goes to your code, and the model gets back only the list of titles.
+The script runs entirely in a sandbox on your machine. The model only gets the last 500 characters of each failed log, not the the pull request, every check run, and every full log.
 
-## Why Code Mode
 
-Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
+## Why Ghost Mode
 
-With normal tool calls, the model calls one tool, reads the whole result, then calls the next. Every result goes through the model, and each one costs tokens and a round trip. In Ghost Mode the model writes a short Python script instead. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
-
-That adds up fast:
-
-- **Way fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **Fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
 - **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tool definitions, `execute` and `poll`. Monty runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the LLM only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
