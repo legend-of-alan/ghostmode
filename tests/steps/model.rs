@@ -44,9 +44,9 @@ fn failed_status_lists_calls(world: &mut World, calls: String) {
 
 #[then(regex = r"^the model waited at least (\d+) ms but under (\d+) seconds$")]
 fn wait_lasted_between(world: &mut World, least_ms: u64, under_secs: u64) {
-    let elapsed = world.elapsed;
-    assert!(elapsed >= Duration::from_millis(least_ms), "{elapsed:?}");
-    assert!(elapsed < Duration::from_secs(under_secs), "{elapsed:?}");
+    let duration = world.request_duration;
+    assert!(duration >= Duration::from_millis(least_ms), "{duration:?}");
+    assert!(duration < Duration::from_secs(under_secs), "{duration:?}");
 }
 
 #[then(regex = r#"^the status's printed text is (".*")$"#)]

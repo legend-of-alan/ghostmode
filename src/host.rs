@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 /// The caller's side of the sandbox: it lists the tools a script may call and answers each
-/// call, normally by forwarding it to the client's MCP tools.
+/// call, normally by forwarding it to an MCP server's tools.
 pub trait Host {
     /// The tools a script may call, by id.
     fn tools(&self) -> Vec<Tool>;
