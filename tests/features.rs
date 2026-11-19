@@ -35,7 +35,10 @@ struct World {
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
-    elapsed: Duration,
+    /// How long the last request from the test (standing in for the caller) to the
+    /// `Sandbox` took to return: `execute`, `poll` or `cancel`, including time the
+    /// sandbox spent waiting on the script and the host's tool calls.
+    request_duration: Duration,
     dispatch: Dispatch,
     span_capture: spans::SpanCapture,
     #[cfg(feature = "rmcp")]
@@ -99,7 +102,7 @@ impl World {
         } else {
             answer.await
         };
-        self.elapsed = started.elapsed();
+        self.request_duration = started.elapsed();
         self.sandbox = Some(sandbox);
         match reply {
             Reply::Status(status) => {
