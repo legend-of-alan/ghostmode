@@ -32,7 +32,8 @@ use crate::sandbox::Limits;
 
 /// Runs each session's scripts in its own worker process from a [`monty_pool::Pool`]. Clones
 /// share the pool's workers. Build it, and so the sandbox, inside the Tokio multi-thread runtime
-/// that built the pool.
+/// that built the pool. monty-pool starts workers with an empty environment, so give
+/// `monty_pool::PoolConfig::subprocess` the worker binary's full path.
 #[derive(Clone)]
 pub struct Pool {
     workers: Arc<monty_pool::Pool>,

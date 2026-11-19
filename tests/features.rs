@@ -232,6 +232,18 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
         .execution_has_failed()
 }
 
+/// The path of the `monty` worker binary in the first `PATH` directory that holds one. monty-pool
+/// starts workers with an empty environment, so it needs the full path.
+#[cfg(feature = "pool")]
+fn find_worker_binary() -> std::path::PathBuf {
+    let file_name = format!("monty{}", std::env::consts::EXE_SUFFIX);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(&file_name))
+        .find(|binary| binary.is_file())
+        .expect("the `monty` worker binary on PATH")
+}
+
 fn main() {
     println!("executor: futures::executor::block_on");
     let mut failed = futures::executor::block_on(run_scenarios(false, TestBackend::Monty));
@@ -250,10 +262,10 @@ fn main() {
     {
         println!("executor: Tokio multi-thread runtime, against monty-pool workers");
         failed |= runtime.block_on(async {
-            let config = monty_pool::PoolConfig::subprocess("monty");
+            let config = monty_pool::PoolConfig::subprocess(find_worker_binary());
             let workers = monty_pool::Pool::new(config)
                 .await
-                .expect("the `monty` worker binary on PATH");
+                .expect("monty-pool starts the `monty` worker");
             run_scenarios(
                 true,
                 TestBackend::Pool(ghostmode::backend::Pool::new(workers)),
