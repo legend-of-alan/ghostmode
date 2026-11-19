@@ -41,8 +41,9 @@ pub struct Limits {
     /// How long the script itself may run, summed over `execute` and every `poll` of its run
     /// and not counting time spent waiting on the host. The default is 30 s.
     pub run_time: Duration,
-    /// The most memory the script may use. In-process this refuses only a single allocation
-    /// over the limit, such as one huge string, with `MemoryError`. The default is 256 MiB.
+    /// The most memory the script may use. In-process this does not cap the script's total
+    /// memory. It only refuses one value bigger than the limit, such as one huge string, with
+    /// `MemoryError`. The default is 256 MiB.
     pub memory_bytes: usize,
     /// How deep the script's calls may nest before it raises `RecursionError`. The default is
     /// 1,000.
