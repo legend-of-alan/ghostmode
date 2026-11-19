@@ -1,0 +1,17 @@
+flowchart TB
+    subgraph Provider["Model provider, remote"]
+        Model["The model"]
+    end
+    subgraph App["Caller's process"]
+        Caller["Caller: agent loop"]
+        subgraph GM["ghostmode Sandbox"]
+            Monty["Monty, runs the script"]
+        end
+        Host["Host: your type, or mcp::Server"]
+    end
+    MCPS["MCP server, separate process"]
+    Model -->|"tool call: execute or poll"| Caller
+    Caller -->|"Status JSON"| Model
+    Caller -->|"execute, poll"| GM
+    GM -->|"Host::call"| Host
+    Host -.->|"only if it is mcp::Server"| MCPS

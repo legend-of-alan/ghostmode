@@ -26,25 +26,7 @@ The evidence:
 
 ## How it works
 
-```mermaid
-flowchart LR
-    subgraph Provider["Model provider, remote"]
-        Model["The model"]
-    end
-    subgraph App["Caller's process"]
-        Caller["Caller: agent loop"]
-        subgraph GM["ghostmode Sandbox"]
-            Monty["Monty, runs the script"]
-        end
-        Host["Host: your type, or mcp::Server"]
-    end
-    MCPS["MCP server, separate process"]
-    Model -->|"tool call: execute or poll"| Caller
-    Caller -->|"Status JSON"| Model
-    Caller -->|"execute, poll"| GM
-    GM -->|"Host::call"| Host
-    Host -.->|"only if it is mcp::Server"| MCPS
-```
+![The model at the provider sends execute or poll to the caller. The caller passes it to the Sandbox, where Monty runs the script. Tool calls go to the host, which reaches an MCP server only if it is mcp::Server.](assets/how-it-works.png)
 
 The model is the LLM. It runs at the model provider, not on your machine. It never runs code. It only sees two tools, `execute` and `poll`, and it sends back tool calls with `code` or a `run_id`.
 
