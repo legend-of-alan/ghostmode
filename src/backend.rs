@@ -7,22 +7,12 @@ use serde_json::Value;
 use crate::host;
 use crate::sandbox::Limits;
 
-#[cfg(feature = "monty")]
-pub use self::monty::{DumpError, Monty};
 #[cfg(feature = "pool")]
-pub use self::pool::Pool;
+pub use self::monty::pool::Pool;
+#[cfg(feature = "monty")]
+pub use self::monty::repl::{DumpError, Monty};
 
 pub mod monty;
-pub mod pool;
-#[cfg(any(feature = "monty", feature = "pool"))]
-mod settings;
-#[cfg(any(feature = "monty", feature = "pool"))]
-mod value;
-
-/// The error text for restoring a dump that holds a suspended or one-shot run, not an idle
-/// session.
-#[cfg(any(feature = "monty", feature = "pool"))]
-const DUMP_HOLDS_RUN: &str = "the dump holds a run, and ghostmode restores only an idle session";
 
 /// Runs a sandbox's scripts in Python sessions whose globals persist from one script to the
 /// next. It holds no session: each method takes the idle session, or the script suspended at a

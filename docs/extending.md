@@ -211,7 +211,7 @@ let mut sandbox = Builder::new(host, OneCall).build().await;
 
 `Sandbox::builder` only builds a `Sandbox` with `Monty`. For your own backend, use `Builder::new` with the host and the backend. The other `Builder` settings work the same.
 
-For the real reference, see `Monty` in `src/backend/monty.rs`. Its `run` method shows how to turn every way Monty can stop into either a Progress::Call or an answer that Monty gets at once. `Pool` in `src/backend/pool.rs` does the same over a worker process, and shows a backend that can lose its session.
+For the real reference, see `Monty` in `src/backend/monty/repl.rs`. Its `run` method shows how to turn every way Monty can stop into either a Progress::Call or an answer that Monty gets at once. `Pool` in `src/backend/monty/pool.rs` does the same over a worker process, and shows a backend that can lose its session.
 
 ### Rules for a backend
 

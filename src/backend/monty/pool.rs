@@ -14,8 +14,6 @@
 //! [`Sandbox::cancel`]: crate::Sandbox::cancel
 //! [`Sandbox::reset`]: crate::Sandbox::reset
 
-#![cfg(feature = "pool")]
-
 use std::error;
 use std::sync::Arc;
 
@@ -25,8 +23,8 @@ use monty_pool::{
 use monty_types::{DEFAULT_MAX_PRINT_COLLECT_BYTES, MontyException, NameLookupResult, PrintStream};
 use serde_json::Value;
 
-use crate::backend::settings::{self, SCRIPT_NAME};
-use crate::backend::{self, Backend, Ending, Progress, Streams, value};
+use super::{SCRIPT_NAME, value};
+use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host;
 use crate::sandbox::Limits;
 
@@ -265,7 +263,7 @@ impl Backend for Pool {
             .restore(bytes.to_vec(), Vec::new(), &mut on_print)
             .await?;
         if suspension.is_some() {
-            return Err(backend::DUMP_HOLDS_RUN.into());
+            return Err(super::DUMP_HOLDS_RUN.into());
         }
         Ok(Session {
             config,
@@ -309,8 +307,8 @@ impl Suspension {
 fn to_repl_config(limits: &Limits) -> ReplConfig {
     ReplConfig {
         script_name: SCRIPT_NAME.to_string(),
-        limits: Some(settings::to_resource_limits(limits)),
-        os_policy: settings::os_policy(),
+        limits: Some(limits.into()),
+        os_policy: super::os_policy(),
         ..ReplConfig::default()
     }
 }

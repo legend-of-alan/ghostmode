@@ -1,218 +1,44 @@
-//! The backend that runs scripts in Monty inside the caller's process. This is the only module
-//! that calls the `monty` crate.
-//!
-//! In-process Monty is not crash-isolated: a script, or a dump restored without a signing key,
-//! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::Pool`,
-//! which runs each session in a worker process.
+//! The backends that run scripts in Monty: `repl` in the caller's process, and `pool` in
+//! monty-pool worker processes, with what they share. Only this module and its children name
+//! Monty's types.
 
-#![cfg(feature = "monty")]
+#![cfg(any(feature = "monty", feature = "pool"))]
 
-use std::{error, mem};
+use monty_types::{OsPolicy, ResourceLimits, SleepMode};
 
-pub use ::monty::DumpError;
-use ::monty::{
-    DUMP_VERSION, Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef,
-};
-use monty_types::{
-    CollectedStreams, CompileOptions, ExtFunctionResult, MontyException, NameLookupResult,
-    PrintStream, PrintWriter, ResourceTracker,
-};
-use serde_json::Value;
-
-use crate::backend::settings::{self, SCRIPT_NAME};
-use crate::backend::{self, Backend, Ending, Progress, Streams, value};
-use crate::host;
 use crate::sandbox::Limits;
 
-/// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
-///
-/// [`Sandbox::builder`]: crate::Sandbox::builder
-pub struct Monty;
+#[cfg(feature = "pool")]
+pub mod pool;
+#[cfg(feature = "monty")]
+pub mod repl;
+mod value;
 
-/// A script suspended at a tool call in [`Monty`], with what it has printed so far.
-pub struct Suspension {
-    function_call: Box<ReplFunctionCall>,
-    streams: CollectedStreams,
-}
+/// The name each session gives its scripts.
+const SCRIPT_NAME: &str = "script.py";
 
-impl Backend for Monty {
-    type Session = Box<MontyRepl>;
-    type Suspension = Suspension;
+/// The error text for restoring a dump that holds a suspended or one-shot run, not an idle
+/// session.
+const DUMP_HOLDS_RUN: &str = "the dump holds a run, and ghostmode restores only an idle session";
 
-    async fn new_session(&self, limits: &Limits) -> Box<MontyRepl> {
-        let tracker = ResourceTracker::default();
-        let mut session = Box::new(MontyRepl::new(
-            SCRIPT_NAME,
-            tracker,
-            CompileOptions::default(),
-        ));
-        set_limits_and_os_policy(&mut session, limits);
-        session
-    }
-
-    async fn feed_start(
-        &self,
-        session: Box<MontyRepl>,
-        code: &str,
-        tool_ids: &[String],
-    ) -> Progress<Self> {
-        let mut streams = CollectedStreams::default();
-        let monty_progress =
-            session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tool_ids)
-    }
-
-    async fn resume(
-        &self,
-        suspension: Suspension,
-        answer: Result<Value, host::Error>,
-        tool_ids: &[String],
-    ) -> Progress<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let answer = match answer {
-            Ok(answer) => ExtFunctionResult::Return(value::from_json(&answer)),
-            Err(error) => ExtFunctionResult::Error(value::to_exception(error)),
-        };
-        let monty_progress =
-            function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tool_ids)
-    }
-
-    async fn abort(
-        &self,
-        suspension: Suspension,
-        message: String,
-        tool_ids: &[String],
-    ) -> Ending<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let error = MontyException::runtime_error(message);
-        let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        match self.run(monty_progress, streams, tool_ids) {
-            Progress::Ended(ending) => ending,
-            Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
-        }
-    }
-
-    async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Streams) {
-        let session = Box::new(suspension.function_call.into_repl());
-        (session, split_streams(suspension.streams))
-    }
-
-    async fn dump(
-        &self,
-        session: &mut Box<MontyRepl>,
-    ) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
-        ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session)).map_err(Into::into)
-    }
-
-    /// Bytes Monty can't load are a [`DumpError`]. A dump of a suspended or one-shot run is
-    /// [`DumpError::Unsupported`], whose `found` is this build's dump version.
-    async fn restore(
-        &self,
-        bytes: &[u8],
-        limits: &Limits,
-    ) -> Result<Box<MontyRepl>, Box<dyn error::Error + Send + Sync>> {
-        let ::monty::Session::Idle(mut session) = Dump::load(bytes)?.state else {
-            return Err(Box::new(DumpError::Unsupported {
-                found: DUMP_VERSION,
-                reason: backend::DUMP_HOLDS_RUN.to_string(),
-            }));
-        };
-        set_limits_and_os_policy(&mut session, limits);
-        Ok(session)
-    }
-}
-
-impl Monty {
-    /// Runs the script until it calls one of the host's tools, whose ids are `tool_ids`, with
-    /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
-    /// raises `NameError`, an OS call gets Monty's no-handler answer, and awaiting a tool raises
-    /// `RuntimeError`. What the script prints is added to `streams`.
-    fn run(
-        &self,
-        mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
-        mut streams: CollectedStreams,
-        tool_ids: &[String],
-    ) -> Progress<Self> {
-        loop {
-            monty_progress = match monty_progress {
-                Err(failure) => {
-                    return Progress::Ended(Ending {
-                        result: Err(failure.error.to_string()),
-                        streams: split_streams(streams),
-                        session: Box::new(failure.repl),
-                        restarted: false,
-                    });
-                }
-                Ok(ReplProgress::Complete { repl, value }) => {
-                    return Progress::Ended(Ending {
-                        result: Ok(value::to_json(value.as_ref())),
-                        streams: split_streams(streams),
-                        session: Box::new(repl),
-                        restarted: false,
-                    });
-                }
-                Ok(ReplProgress::FunctionCall(mut function_call))
-                    if tool_ids.contains(&function_call.function_name) =>
-                {
-                    let tool_id = mem::take(&mut function_call.function_name);
-                    match value::to_call(tool_id, &function_call.args) {
-                        Ok(call) => {
-                            let suspension = Suspension {
-                                function_call: Box::new(function_call),
-                                streams,
-                            };
-                            return Progress::Call { call, suspension };
-                        }
-                        Err(error) => function_call.resume(
-                            ExtFunctionResult::Error(error),
-                            PrintWriter::collect_streams(&mut streams),
-                        ),
-                    }
-                }
-                Ok(ReplProgress::FunctionCall(mut function_call)) => {
-                    let answer =
-                        ExtFunctionResult::NotFound(mem::take(&mut function_call.function_name));
-                    function_call.resume(answer, PrintWriter::collect_streams(&mut streams))
-                }
-                Ok(ReplProgress::NameLookup(lookup)) => lookup.resume(
-                    NameLookupResult::Undefined,
-                    PrintWriter::collect_streams(&mut streams),
-                ),
-                Ok(ReplProgress::OsCall(os_call)) => {
-                    let answer = os_call.function_call.no_handler_result();
-                    os_call.resume(answer, PrintWriter::collect_streams(&mut streams))
-                }
-                Ok(ReplProgress::ResolveFutures(futures)) => {
-                    let error = MontyException::runtime_error("tools are not awaitable");
-                    futures.abort(error, PrintWriter::collect_streams(&mut streams))
-                }
-            };
+/// Monty's limits that stop a script at `limits`' run time, memory and recursion depth. They
+/// put no bound on suspensions, so only [`Limits::calls_per_execute`] limits tool calls.
+impl From<&Limits> for ResourceLimits {
+    fn from(limits: &Limits) -> Self {
+        Self {
+            max_feed_duration: Some(limits.run_time),
+            max_memory: Some(limits.memory_bytes),
+            max_recursion_depth: limits.recursion_depth,
+            max_suspensions: usize::MAX,
+            ..Self::default()
         }
     }
 }
 
-/// Makes `session` stop a script at `limits`' run time, memory and recursion depth, and return
-/// from `time.sleep` at once.
-fn set_limits_and_os_policy(session: &mut MontyRepl, limits: &Limits) {
-    *session.tracker_mut() = ResourceTracker::new(settings::to_resource_limits(limits));
-    session.set_os_policy(settings::os_policy());
-}
-
-/// What a script printed into `streams`, split into stdout and stderr.
-fn split_streams(streams: CollectedStreams) -> Streams {
-    let mut split = Streams::default();
-    for (stream, text) in streams.into_entries() {
-        match stream {
-            PrintStream::Stdout => split.stdout.push_str(&text),
-            PrintStream::Stderr => split.stderr.push_str(&text),
-        }
+/// The OS policy under which `time.sleep` returns at once.
+fn os_policy() -> OsPolicy {
+    OsPolicy {
+        sleep: SleepMode::Zero,
+        ..OsPolicy::default()
     }
-    split
 }
