@@ -32,6 +32,11 @@ pub fn list_mcp_tools(host_tools: &[host::Tool]) -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "The Python script to run."},
+                    "restart": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Start the session fresh first, with no globals. The status then carries \"restarted\": true.",
+                    },
                 },
                 "required": ["code"],
                 "additionalProperties": false,
@@ -53,8 +58,7 @@ pub fn list_mcp_tools(host_tools: &[host::Tool]) -> Vec<Value> {
 }
 
 /// The same tools as [`list_mcp_tools`], as OpenAI function tools:
-/// `{"type": "function", "function": {"name", "description", "parameters"}}`. Strict mode
-/// accepts their schemas.
+/// `{"type": "function", "function": {"name", "description", "parameters"}}`.
 pub fn list_openai_functions(host_tools: &[host::Tool]) -> Vec<Value> {
     list_mcp_tools(host_tools)
         .into_iter()

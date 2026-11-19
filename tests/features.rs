@@ -1,5 +1,7 @@
 //! The feature scenarios: one `World`, run once per executor.
 
+#[path = "steps/caller.rs"]
+mod caller;
 #[path = "steps/limits.rs"]
 mod limits;
 #[cfg(feature = "rmcp")]
@@ -19,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
-use ghostmode::{Limits, Sandbox};
+use ghostmode::{Limits, Sandbox, Status};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
 use tracing::instrument::WithSubscriber;
@@ -32,6 +34,7 @@ struct World {
     limits: Option<Limits>,
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
+    cancel_returned: Option<bool>,
     elapsed: Duration,
     dispatch: Dispatch,
     span_capture: spans::SpanCapture,
@@ -45,16 +48,24 @@ impl fmt::Debug for World {
     }
 }
 
-/// One of the model's two tool calls, from a When step to the sandbox.
+/// One of the model's two tool calls or the caller's cancel, from a When step to the sandbox.
 enum Request {
-    Execute(String),
+    Execute { code: String, restart: bool },
     Poll(u64),
+    Cancel(u64),
+}
+
+/// What the sandbox answers a [`Request`], from the sandbox to a When step.
+enum Reply {
+    Status(Status),
+    Cancel(bool),
 }
 
 impl World {
     /// Sends `request` to the scenario's sandbox, building it on first use, and keeps the status
-    /// JSON and how long the model waited for it. On a Tokio multi-thread runtime the call runs
-    /// in `tokio::spawn`, so a sandbox future that is not `Send` fails the build.
+    /// JSON or what cancel returned, and how long the request waited for it. On a Tokio
+    /// multi-thread runtime the call runs in `tokio::spawn`, so a sandbox future that is not
+    /// `Send` fails the build.
     async fn send(&mut self, request: Request) {
         let mut sandbox = self.sandbox.take().unwrap_or_else(|| {
             let mut builder = Sandbox::builder(self.host.clone());
@@ -70,24 +81,32 @@ impl World {
             builder.build()
         });
         let answer = async move {
-            let status = match request {
-                Request::Execute(code) => sandbox.execute(&code).await,
-                Request::Poll(run_id) => sandbox.poll(run_id).await,
+            let reply = match request {
+                Request::Execute { code, restart } => {
+                    Reply::Status(sandbox.execute(&code, restart).await)
+                }
+                Request::Poll(run_id) => Reply::Status(sandbox.poll(run_id).await),
+                Request::Cancel(run_id) => Reply::Cancel(sandbox.cancel(run_id)),
             };
-            (sandbox, status)
+            (sandbox, reply)
         }
         .with_subscriber(self.dispatch.clone());
         let started = Instant::now();
         let multi_thread = Handle::try_current()
             .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread);
-        let (sandbox, status) = if multi_thread {
+        let (sandbox, reply) = if multi_thread {
             tokio::spawn(answer).await.expect("sandbox task")
         } else {
             answer.await
         };
         self.elapsed = started.elapsed();
         self.sandbox = Some(sandbox);
-        self.status = serde_json::to_value(status).expect("status serializes");
+        match reply {
+            Reply::Status(status) => {
+                self.status = serde_json::to_value(status).expect("status serializes");
+            }
+            Reply::Cancel(was_open) => self.cancel_returned = Some(was_open),
+        }
     }
 }
 

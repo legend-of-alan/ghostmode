@@ -75,10 +75,10 @@ fn measure_time_per_call(field: CallField, arg_size_bytes: usize) -> Duration {
         };
         let mut sandbox = Sandbox::builder(CloneHost { field }).limits(limits).build();
         expect_finished(executor::block_on(
-            sandbox.execute(&format!("payload = 'x' * {arg_size_bytes}")),
+            sandbox.execute(&format!("payload = 'x' * {arg_size_bytes}"), false),
         ));
         let started = Instant::now();
-        let status = executor::block_on(sandbox.execute(&script));
+        let status = executor::block_on(sandbox.execute(&script, false));
         let run_time = started.elapsed();
         expect_finished(status);
         run_time

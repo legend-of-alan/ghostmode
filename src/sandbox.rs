@@ -20,6 +20,7 @@ pub struct Sandbox<H> {
     repl: Repl,
     state: Option<State>,
     last_run_id: u64,
+    unreported_restart: bool,
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
@@ -74,6 +75,10 @@ pub enum Status {
         /// What the script printed, if it printed anything.
         #[serde(skip_serializing_if = "Option::is_none")]
         printed: Option<String>,
+        /// Whether the session started fresh before this script, with no globals. Serialized
+        /// only when true.
+        #[serde(skip_serializing_if = "is_false")]
+        restarted: bool,
     },
     /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
     Running {
@@ -91,6 +96,10 @@ pub enum Status {
         /// would take the script's prints past 10 MiB raises `MemoryError` in the script.
         #[serde(skip_serializing_if = "Option::is_none")]
         printed: Option<String>,
+        /// Whether the session started fresh before this script, with no globals. Serialized
+        /// only when true.
+        #[serde(skip_serializing_if = "is_false")]
+        restarted: bool,
     },
 }
 
@@ -141,8 +150,9 @@ impl<H: Host> Sandbox<H> {
     /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
     /// script that fails is a `failed` status, as is a request while another run is still
     /// running. If a run waited past its idle timeout, it expires and `execute` answers its
-    /// `failed` status without running `code`.
-    pub async fn execute(&mut self, code: &str) -> Status {
+    /// `failed` status without running `code`. With `restart`, an idle session starts fresh
+    /// before `code` runs, so the script sees no globals.
+    pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         let span = tracing::info_span!(
             "execute",
             run_id = Empty,
@@ -155,6 +165,9 @@ impl<H: Host> Sandbox<H> {
             if let Some(status) = self.expire_idle_run() {
                 return status;
             }
+            if restart && matches!(self.state, Some(State::Idle(_))) {
+                self.start_fresh();
+            }
             let session = match self.state.take() {
                 Some(State::Idle(session)) => session,
                 suspended => {
@@ -164,6 +177,7 @@ impl<H: Host> Sandbox<H> {
                         error,
                         calls: Vec::new(),
                         printed: None,
+                        restarted: false,
                     };
                 }
             };
@@ -200,6 +214,7 @@ impl<H: Host> Sandbox<H> {
                     error,
                     calls: Vec::new(),
                     printed: None,
+                    restarted: false,
                 };
             }
             match self.expire_idle_run() {
@@ -211,6 +226,36 @@ impl<H: Host> Sandbox<H> {
         .await;
         record_end(&span, status.as_str(), started);
         status
+    }
+
+    /// Cancels the run with `run_id` that `execute` left running, and says whether that run was
+    /// open. The session is idle again with the globals the script had set, and the host's
+    /// answer to the call the script waits on is dropped. Cancelling any other run changes
+    /// nothing.
+    pub fn cancel(&mut self, run_id: u64) -> bool {
+        let Some(run) = self.take_run_if(|run| run.id == run_id) else {
+            return false;
+        };
+        self.state = Some(State::Idle(Repl::abandon(run.function_call)));
+        true
+    }
+
+    /// Replaces the session with an empty one, and marks the next finished or failed status
+    /// `restarted`.
+    fn start_fresh(&mut self) {
+        self.state = Some(State::Idle(Repl::new_session(&self.limits)));
+        self.unreported_restart = true;
+    }
+
+    /// Takes the suspended run out of the sandbox if `condition` holds for it.
+    fn take_run_if(&mut self, condition: impl FnOnce(&Run) -> bool) -> Option<Run> {
+        match self.state.take() {
+            Some(State::Suspended(run)) if condition(&run) => Some(run),
+            state => {
+                self.state = state;
+                None
+            }
+        }
     }
 
     /// Waits up to `wait` for the suspended run, answering its tool calls as the host answers
@@ -300,20 +345,15 @@ impl<H: Host> Sandbox<H> {
     /// Ends the suspended run if it has waited past the idle timeout, and says it expired.
     fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.limits.idle_timeout?;
-        let expired = matches!(&self.state, Some(State::Suspended(run)) if run.idle_since.elapsed() >= idle_timeout);
-        if !expired {
-            return None;
-        }
-        let Some(State::Suspended(run)) = self.state.take() else {
-            panic!("expire_idle_run without a suspended run");
-        };
+        let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
         let session = Repl::abandon(run.function_call);
         let error = format!("run {} expired", run.id);
         Some(self.end_run(session, Err(error), run.answered_calls, run.printed))
     }
 
     /// Ends the run: `session` is idle again, and the script's result and what it printed become
-    /// the status, cut to share [`Limits::output_chars`].
+    /// the status, cut to share [`Limits::output_chars`]. The status is `restarted` if the
+    /// session started fresh since the last status that was.
     fn end_run(
         &mut self,
         session: Box<MontyRepl>,
@@ -330,15 +370,18 @@ impl<H: Host> Sandbox<H> {
         let (result_share, printed_share) =
             split_budget(self.limits.output_chars, result_chars, printed_chars);
         let printed = (!printed.is_empty()).then(|| cut_text(printed, printed_share));
+        let restarted = mem::take(&mut self.unreported_restart);
         match result {
             Ok(value) => Status::Finished {
                 value: cut_value(value, result_share),
                 printed,
+                restarted,
             },
             Err(error) => Status::Failed {
                 error: cut_text(error, result_share),
                 calls: answered_calls,
                 printed,
+                restarted,
             },
         }
     }
@@ -414,6 +457,7 @@ impl<H: Host> Builder<H> {
             repl: Repl::new(tool_ids),
             state: Some(State::Idle(Repl::new_session(&self.limits))),
             last_run_id: 0,
+            unreported_restart: false,
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
             limits: self.limits,
@@ -430,6 +474,11 @@ impl Status {
             Self::Failed { .. } => "failed",
         }
     }
+}
+
+/// Whether `flag` is false, so serde skips a `restarted: false`.
+fn is_false(flag: &bool) -> bool {
+    !flag
 }
 
 /// How many characters `value` counts for against [`Limits::output_chars`]: a string's own
