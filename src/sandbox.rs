@@ -500,7 +500,7 @@ impl<H: Host> Builder<H> {
     ///
     /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
     /// signed restores, including an older one. Use a random key of at least 32 bytes, and only
-    /// for dumps.
+    /// for dumps. The key isn't wiped from memory when the sandbox drops.
     pub fn signing_key(mut self, key: impl Into<Vec<u8>>) -> Self {
         self.signing_key = Some(key.into());
         self

@@ -83,6 +83,8 @@ let reply = serde_json::to_value(&status).unwrap();
 
 `schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.
 
+`Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Monty doesn't check dumps, so before you store them where others can write, set `Builder::signing_key`: restore then refuses bytes the key didn't sign. The tag doesn't hide what the session holds.
+
 ## Build from source
 
 All you need is [rustup](https://rustup.rs). It grabs the Rust version pinned in `rust-toolchain.toml`.
