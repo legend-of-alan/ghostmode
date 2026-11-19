@@ -5,8 +5,10 @@ use std::{error, fmt, mem};
 
 use futures_timer::Delay;
 use futures_util::future::{self, BoxFuture, Either, FutureExt};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
@@ -24,6 +26,7 @@ pub struct Sandbox<H> {
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
+    signing_key: Option<[u8; 32]>,
 }
 
 /// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`].
@@ -32,7 +35,11 @@ pub struct Builder<H> {
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
+    signing_key: Option<[u8; 32]>,
 }
+
+/// How many bytes the HMAC-SHA256 tag takes that a signing key appends to a dump.
+const TAG_BYTES: usize = 32;
 
 /// What a script may use before the sandbox stops it with a `failed` status. A stopped script
 /// leaves the session's globals as it had set them.
@@ -122,6 +129,9 @@ pub enum Error {
     },
     /// Monty can't load these bytes as a session.
     Restore(DumpError),
+    /// The bytes don't end in the tag that the builder's signing key makes for them: the key
+    /// didn't sign them, or they changed since.
+    SignatureMismatch,
 }
 
 /// Where the sandbox's session is: idle between scripts, or held by a suspended run.
@@ -164,6 +174,7 @@ impl<H: Host> Sandbox<H> {
             execute_wait: Duration::from_secs(30),
             poll_wait: Duration::from_secs(10),
             limits: Limits::default(),
+            signing_key: None,
         }
     }
 
@@ -272,11 +283,19 @@ impl<H: Host> Sandbox<H> {
         self.unreported_restart = true;
     }
 
-    /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox.
-    /// While a run is open this is [`Error::RunOpen`].
+    /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
+    /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
+    /// [`Error::RunOpen`].
     pub fn dump(&self) -> Result<Vec<u8>, Error> {
         match &self.state {
-            Some(State::Idle(session)) => Ok(Repl::dump_session(session)),
+            Some(State::Idle(session)) => {
+                let mut bytes = Repl::dump_session(session);
+                if let Some(key) = self.signing_key {
+                    let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
+                    bytes.extend_from_slice(&tag);
+                }
+                Ok(bytes)
+            }
             _ => Err(Error::RunOpen {
                 run_id: self.last_run_id,
             }),
@@ -495,6 +514,18 @@ impl<H: Host> Builder<H> {
         self
     }
 
+    /// The secret key that signs dumps. With it, [`Sandbox::dump`] appends an HMAC-SHA256 tag,
+    /// and [`Builder::restore`] checks the tag before Monty reads a byte. The default is unset,
+    /// no signing.
+    ///
+    /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
+    /// signed restores, including an older one. Use the key only for dumps. The key isn't wiped
+    /// from memory when the sandbox drops.
+    pub fn signing_key(mut self, key: [u8; 32]) -> Self {
+        self.signing_key = Some(key);
+        self
+    }
+
     /// The sandbox, with an empty Python session.
     pub fn build(self) -> Sandbox<H> {
         let session = Repl::new_session(&self.limits);
@@ -504,10 +535,25 @@ impl<H: Host> Builder<H> {
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
     /// this builder's limits. Bytes Monty can't load are [`Error::Restore`].
     ///
-    /// Monty doesn't authenticate dumps. Bytes from anyone else can panic, abort or hang the
-    /// process, so restore only bytes you made, or set a signing key (issue #13).
+    /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
+    /// them are [`Error::SignatureMismatch`], checked in constant time before Monty reads a
+    /// byte. Without a key, restore trusts the bytes. Monty doesn't authenticate dumps, and
+    /// bytes from anyone else can panic, abort or hang the process, so restore only bytes you
+    /// made.
     pub fn restore(self, bytes: &[u8]) -> Result<Sandbox<H>, Error> {
-        let session = Repl::load_session(bytes, &self.limits).map_err(Error::Restore)?;
+        let session_bytes = match self.signing_key {
+            Some(key) => {
+                let (session_bytes, tag) = bytes
+                    .split_last_chunk::<TAG_BYTES>()
+                    .ok_or(Error::SignatureMismatch)?;
+                compute_hmac(&key, session_bytes)
+                    .verify_slice(tag)
+                    .map_err(|_| Error::SignatureMismatch)?;
+                session_bytes
+            }
+            None => bytes,
+        };
+        let session = Repl::load_session(session_bytes, &self.limits).map_err(Error::Restore)?;
         Ok(self.build_with_session(session))
     }
 
@@ -523,6 +569,7 @@ impl<H: Host> Builder<H> {
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
             limits: self.limits,
+            signing_key: self.signing_key,
         }
     }
 }
@@ -532,6 +579,7 @@ impl fmt::Display for Error {
         match self {
             Self::RunOpen { run_id } => write!(f, "run {run_id} is still running"),
             Self::Restore(error) => write!(f, "can't restore the session: {error}"),
+            Self::SignatureMismatch => f.write_str("the signing key didn't sign these bytes"),
         }
     }
 }
@@ -539,7 +587,7 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Self::RunOpen { .. } => None,
+            Self::RunOpen { .. } | Self::SignatureMismatch => None,
             Self::Restore(error) => Some(error),
         }
     }
@@ -628,6 +676,14 @@ fn split_budget(budget: usize, first_chars: usize, second_chars: usize) -> (usiz
         .max(budget / 2)
         .min(second_chars);
     (budget - second_share, second_share)
+}
+
+/// The HMAC-SHA256 of `bytes` under `key`, to finalize as a tag or to check a tag against.
+fn compute_hmac(key: &[u8], bytes: &[u8]) -> Hmac<Sha256> {
+    let mut hmac =
+        Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 takes a key of any length");
+    hmac.update(bytes);
+    hmac
 }
 
 /// Records on `span` the status a traced step ended with and how long it took since `started`.

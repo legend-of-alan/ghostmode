@@ -32,6 +32,7 @@ struct World {
     execute_wait: Option<Duration>,
     poll_wait: Option<Duration>,
     limits: Option<Limits>,
+    signing_key: Option<[u8; 32]>,
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
@@ -71,7 +72,8 @@ enum Reply {
 }
 
 impl World {
-    /// A builder for the scenario's sandbox, with the host, waits and limits its Given steps set.
+    /// A builder for the scenario's sandbox, with the host, waits, limits and signing key its
+    /// steps set.
     fn builder(&self) -> Builder<test_host::TestHost> {
         let mut builder = Sandbox::builder(self.host.clone());
         if let Some(wait) = self.execute_wait {
@@ -82,6 +84,9 @@ impl World {
         }
         if let Some(limits) = self.limits {
             builder = builder.limits(limits);
+        }
+        if let Some(key) = self.signing_key {
+            builder = builder.signing_key(key);
         }
         builder
     }
