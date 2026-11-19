@@ -5,22 +5,31 @@
 
 > Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
 
-Let your agent write code instead of making tool calls one at a time. The core is async and doesn't tie you to a runtime.
+Ghost Mode is a Rust library for agents. It lets the model write one short Python script instead of making tool calls one at a time. The script calls your tools, and only its result goes back to the model.
+
+Say the model needs the open issues for two people. With normal tool calls, it calls `list_issues` twice and reads every full result. With Ghost Mode, it sends one script:
+
+```python
+issues = []
+for person in ["ana", "ben"]:
+    issues += list_issues(assignee=person, state="open")
+[issue["title"] for issue in issues]
+```
+
+The script runs in your process. Each `list_issues` call goes to your code, and the model gets back only the list of titles.
 
 ## Why Code Mode
 
-Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
+With normal tool calls, every result goes through the model. The model calls a tool, reads the whole result, and then picks the next call. Each step costs tokens and a round trip to the model provider. A script does the loops, filtering and error handling itself, so the model reads one result at the end.
 
-With normal tool calls, the model calls one tool, reads the whole result, then calls the next. Every result goes through the model, and each one costs tokens and a round trip. In Ghost Mode the model writes a short Python script instead. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
+Other teams have measured what this saves:
 
-That adds up fast:
+- **Fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000, which is 98.7% less. The agent wrote code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, more than 2,500 endpoints, into about 1,000 tokens. Plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **Fewer steps and better results.** Models have read far more code than tool-call JSON. Across 17 models, the CodeAct paper found that code actions took up to 30% fewer actions than JSON or text tool calls, and succeeded up to 20 points more often ([paper](https://arxiv.org/abs/2402.01030)).
 
-- **Way fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
-- **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
+Cloudflare calls this approach Code Mode. Ghost Mode brings it to Rust.
 
-Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
-
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tool definitions, `execute` and `poll`. Monty runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+To use it, give a `Sandbox` your tools, or point it at an MCP server. Then give the model two tool definitions, `execute` and `poll`. Monty, a Python interpreter, runs the script inside your process, so you don't need a container or a separate service. The script can reach the outside world only through your tools. The core is async, and you pick the runtime: Tokio, smol or a blocking executor.
 
 ## How it works
 
@@ -85,9 +94,11 @@ let reply = serde_json::to_value(&status).unwrap();
 
 `Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Monty doesn't check dumps, so before you store them where others can write, set `Builder::signing_key`: restore then refuses bytes the key didn't sign. The tag doesn't hide what the session holds.
 
+To offer tools some other way, or to run scripts in something other than Monty, see [Writing a host or a backend](docs/extending.md).
+
 ## Build from source
 
-All you need is [rustup](https://rustup.rs). It grabs the Rust version pinned in `rust-toolchain.toml`.
+You need [rustup](https://rustup.rs). It installs the Rust version that `rust-toolchain.toml` pins.
 
 ```sh
 git clone https://github.com/legend-of-alan/ghostmode.git
@@ -96,12 +107,12 @@ cargo build --locked
 cargo test --locked
 ```
 
-Add `--all-features` to build the `rmcp` feature too. Fmt, clippy and the rest of CI live in [CONTRIBUTING.md](CONTRIBUTING.md).
+The default build includes Monty. Add `--all-features` to also build `mcp::Server`, which the `rmcp` feature turns on. [CONTRIBUTING.md](CONTRIBUTING.md) lists every check that CI runs.
 
 ## Contributing
 
-Contributions are issues only for now. See [CONTRIBUTING.md](CONTRIBUTING.md).
+For now, contributions are issues only. Open an issue and pick the form that fits. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
 
 ## License
 
-Licensed under [MIT](LICENSE).
+Ghost Mode is under the [MIT license](LICENSE).
