@@ -17,7 +17,7 @@ What you get:
 
 - **Way fewer tokens.** Big intermediate results stay in the script. Anthropic cut one workflow from 150,000 tokens to 2,000, and Cloudflare fits its whole 2,500-endpoint API in about 1,000 tokens instead of 1.17 million.
 - **Fewer round trips.** One `execute` can make many tool calls. CodeAct needed up to 30% fewer actions.
-- **Smarter tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code. CodeAct got up to 20% higher success.
+- **Smarter tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code. CodeAct raised success by up to 20 points.
 
 What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tools, `execute` and `poll`. The script runs in Monty, a Python interpreter inside your process, so there's no container or extra service to run. The script can only reach the outside world through your tools.
 
