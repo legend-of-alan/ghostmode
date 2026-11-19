@@ -24,6 +24,7 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
     When the caller dumps the sandbox
     Then the caller's error is that run 1 is open
 
+  @monty
   Scenario: Restoring bytes that are not a dump is Monty's NotADump
     When the caller restores the bytes "not a dump" into a new sandbox
     Then the caller's error is Monty's NotADump

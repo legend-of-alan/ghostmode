@@ -1,11 +1,38 @@
-//! Conversion between JSON values and Python values.
+//! Conversion between JSON values and Python values, and between the host's calls and answers
+//! and Monty's.
 //!
 //! Containers become arrays or objects, an `int` too big for 64 bits becomes its digit string,
 //! and any other value, such as a float JSON can't hold, becomes its `repr`.
 
 use monty_types::unstable::{self, MontyNode};
-use monty_types::{MontyObject, ObjectRef};
+use monty_types::{CallArgs, ExcType, MontyException, MontyObject, ObjectRef};
 use serde_json::{Map, Number, Value};
+
+use crate::host;
+
+/// The host call a script made to the tool `tool_id` with `args`, or the `TypeError` the script
+/// raises when `args` hold a positional argument.
+pub(crate) fn to_call(tool_id: String, args: &CallArgs) -> Result<host::Call, MontyException> {
+    if args.args().len() > 0 {
+        let message = format!("{tool_id}() takes keyword arguments only");
+        return Err(MontyException::new(ExcType::TypeError, Some(message)));
+    }
+    let args = args.kwargs().map(|(key, value)| {
+        let key = key.as_str().expect("kwargs keys are str").to_string();
+        (key, to_json(value))
+    });
+    let args = args.collect();
+    Ok(host::Call { tool_id, args })
+}
+
+/// The exception a host's error raises in the script: `PermissionError` for a refusal, and
+/// `RuntimeError` for a failed call.
+pub(crate) fn to_exception(error: host::Error) -> MontyException {
+    match error {
+        host::Error::Refused(reason) => MontyException::new(ExcType::PermissionError, Some(reason)),
+        host::Error::Failed(message) => MontyException::new(ExcType::RuntimeError, Some(message)),
+    }
+}
 
 /// The JSON the model reads for a Python value.
 pub(crate) fn to_json(value: ObjectRef<'_>) -> Value {

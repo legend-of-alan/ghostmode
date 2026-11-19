@@ -91,6 +91,8 @@ let reply = serde_json::to_value(&status).unwrap();
 
 `schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.
 
+Monty inside your process isn't crash-isolated: a script, or a dump restored without a signing key, can panic, abort or hang the process. For untrusted scripts, turn on the `pool` feature and pass a `backend::Pool` to `Builder::new`. It runs each session in its own `monty` worker process from a monty-pool `Pool`, so a crash ends only that worker, and the next status says the session restarted. It needs a Tokio multi-thread runtime.
+
 `Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Monty doesn't check dumps, so before you store them where others can write, set `Builder::signing_key`: restore then refuses bytes the key didn't sign. The tag doesn't hide what the session holds.
 
 To offer tools some other way, or to run scripts in something other than Monty, see [Writing a host or a backend](docs/extending.md).
@@ -106,7 +108,7 @@ cargo build --locked
 cargo test --locked
 ```
 
-The default build includes Monty. Add `--all-features` to also build `mcp::Server`, which the `rmcp` feature turns on. [CONTRIBUTING.md](CONTRIBUTING.md) lists every check that CI runs.
+The default build includes Monty. Add `--all-features` to also build `mcp::Server`, which the `rmcp` feature turns on, and `backend::Pool`, which the `pool` feature turns on. The `pool` feature's dependencies need a C compiler. [CONTRIBUTING.md](CONTRIBUTING.md) lists every check that CI runs, and how to install the worker binary that the `pool` tests need.
 
 ## Contributing
 

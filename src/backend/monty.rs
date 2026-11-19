@@ -1,8 +1,9 @@
 //! The backend that runs scripts in Monty inside the caller's process. This is the only module
-//! that talks to Monty.
+//! that calls the `monty` crate.
 //!
 //! In-process Monty is not crash-isolated: a script, or a dump restored without a signing key,
-//! can panic, abort or hang the caller's process.
+//! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::Pool`,
+//! which runs each session in a worker process.
 
 #![cfg(feature = "monty")]
 
@@ -10,23 +11,18 @@ use std::{error, mem};
 
 pub use ::monty::DumpError;
 use ::monty::{
-    DUMP_VERSION, Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, Session,
-    SessionRef,
+    DUMP_VERSION, Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef,
 };
 use monty_types::{
-    CollectedStreams, CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult,
-    OsPolicy, PrintStream, PrintWriter, ResourceLimits, ResourceTracker, SleepMode,
+    CollectedStreams, CompileOptions, ExtFunctionResult, MontyException, NameLookupResult,
+    PrintStream, PrintWriter, ResourceTracker,
 };
 use serde_json::Value;
 
-use crate::backend::{Backend, Ending, Progress, Streams};
+use crate::backend::settings::{self, SCRIPT_NAME};
+use crate::backend::{self, Backend, Ending, Progress, Streams, value};
 use crate::host;
 use crate::sandbox::Limits;
-
-mod value;
-
-/// The file name a script's traceback names.
-const SCRIPT_NAME: &str = "script.py";
 
 /// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
 ///
@@ -78,13 +74,7 @@ impl Backend for Monty {
         } = suspension;
         let answer = match answer {
             Ok(answer) => ExtFunctionResult::Return(value::from_json(&answer)),
-            Err(host::Error::Refused(reason)) => ExtFunctionResult::Error(MontyException::new(
-                ExcType::PermissionError,
-                Some(reason),
-            )),
-            Err(host::Error::Failed(message)) => {
-                ExtFunctionResult::Error(MontyException::new(ExcType::RuntimeError, Some(message)))
-            }
+            Err(error) => ExtFunctionResult::Error(value::to_exception(error)),
         };
         let monty_progress =
             function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
@@ -101,7 +91,7 @@ impl Backend for Monty {
             function_call,
             mut streams,
         } = suspension;
-        let error = MontyException::new(ExcType::RuntimeError, Some(message));
+        let error = MontyException::runtime_error(message);
         let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
         match self.run(monty_progress, streams, tool_ids) {
             Progress::Ended(ending) => ending,
@@ -114,9 +104,11 @@ impl Backend for Monty {
         (session, split_streams(suspension.streams))
     }
 
-    async fn dump(&self, session: &mut Box<MontyRepl>) -> Vec<u8> {
-        ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session))
-            .expect("Monty serializes every idle session")
+    async fn dump(
+        &self,
+        session: &mut Box<MontyRepl>,
+    ) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
+        ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session)).map_err(Into::into)
     }
 
     /// Bytes Monty can't load are a [`DumpError`]. A dump of a suspended or one-shot run is
@@ -126,11 +118,10 @@ impl Backend for Monty {
         bytes: &[u8],
         limits: &Limits,
     ) -> Result<Box<MontyRepl>, Box<dyn error::Error + Send + Sync>> {
-        let Session::Idle(mut session) = Dump::load(bytes)?.state else {
+        let ::monty::Session::Idle(mut session) = Dump::load(bytes)?.state else {
             return Err(Box::new(DumpError::Unsupported {
                 found: DUMP_VERSION,
-                reason: "the dump holds a run, and ghostmode restores only an idle session"
-                    .to_string(),
+                reason: backend::DUMP_HOLDS_RUN.to_string(),
             }));
         };
         set_limits_and_os_policy(&mut session, limits);
@@ -156,6 +147,7 @@ impl Monty {
                         result: Err(failure.error.to_string()),
                         streams: split_streams(streams),
                         session: Box::new(failure.repl),
+                        restarted: false,
                     });
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
@@ -163,37 +155,25 @@ impl Monty {
                         result: Ok(value::to_json(value.as_ref())),
                         streams: split_streams(streams),
                         session: Box::new(repl),
+                        restarted: false,
                     });
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call))
                     if tool_ids.contains(&function_call.function_name) =>
                 {
-                    let positional = function_call.args.args().len();
-                    if positional > 0 {
-                        let message = format!(
-                            "{}() takes keyword arguments only",
-                            function_call.function_name
-                        );
-                        let error = MontyException::new(ExcType::TypeError, Some(message));
-                        function_call.resume(
+                    let tool_id = mem::take(&mut function_call.function_name);
+                    match value::to_call(tool_id, &function_call.args) {
+                        Ok(call) => {
+                            let suspension = Suspension {
+                                function_call: Box::new(function_call),
+                                streams,
+                            };
+                            return Progress::Call { call, suspension };
+                        }
+                        Err(error) => function_call.resume(
                             ExtFunctionResult::Error(error),
                             PrintWriter::collect_streams(&mut streams),
-                        )
-                    } else {
-                        let args = function_call.args.kwargs().map(|(key, value)| {
-                            let key = key.as_str().expect("kwargs keys are str").to_string();
-                            (key, value::to_json(value))
-                        });
-                        let args = args.collect();
-                        let call = host::Call {
-                            tool_id: mem::take(&mut function_call.function_name),
-                            args,
-                        };
-                        let suspension = Suspension {
-                            function_call: Box::new(function_call),
-                            streams,
-                        };
-                        return Progress::Call { call, suspension };
+                        ),
                     }
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call)) => {
@@ -218,20 +198,11 @@ impl Monty {
     }
 }
 
-/// Makes `session` stop a script at `limits`' run time, memory and recursion depth, give every
-/// OS call Monty's no-handler answer, and return from `time.sleep` at once.
+/// Makes `session` stop a script at `limits`' run time, memory and recursion depth, and return
+/// from `time.sleep` at once.
 fn set_limits_and_os_policy(session: &mut MontyRepl, limits: &Limits) {
-    let resource_limits = ResourceLimits {
-        max_feed_duration: Some(limits.run_time),
-        max_memory: Some(limits.memory_bytes),
-        max_recursion_depth: limits.recursion_depth,
-        ..ResourceLimits::default()
-    };
-    *session.tracker_mut() = ResourceTracker::new(resource_limits);
-    session.set_os_policy(OsPolicy {
-        sleep: SleepMode::Zero,
-        ..OsPolicy::default()
-    });
+    *session.tracker_mut() = ResourceTracker::new(settings::to_resource_limits(limits));
+    session.set_os_policy(settings::os_policy());
 }
 
 /// What a script printed into `streams`, split into stdout and stderr.

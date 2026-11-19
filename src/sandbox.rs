@@ -47,7 +47,8 @@ pub struct Builder<H, B> {
 const TAG_BYTES: usize = 32;
 
 /// What a script may use before the sandbox stops it with a `failed` status. A stopped script
-/// leaves the session's globals as it had set them.
+/// leaves the session's globals as it had set them, unless the backend lost them, which the next
+/// status reports as `restarted`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// How long the script itself may run, summed over `execute` and every `poll` of its run
@@ -55,7 +56,8 @@ pub struct Limits {
     pub run_time: Duration,
     /// The most memory the script may use. In-process this does not cap the script's total
     /// memory. It only refuses one value bigger than the limit, such as one huge string, with
-    /// `MemoryError`. The default is 256 MiB.
+    /// `MemoryError`. A `backend::Pool` worker caps the script's total memory. The default is
+    /// 256 MiB.
     pub memory_bytes: usize,
     /// How deep the script's calls may nest before it raises `RecursionError`. The default is
     /// 1,000.
@@ -111,7 +113,7 @@ pub enum Status {
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
-        /// 10 MiB raises `MemoryError` in the script.
+        /// 10 MiB raises `MemoryError` in the script, or in `backend::Pool` is dropped.
         #[serde(skip_serializing_if = "Option::is_none")]
         stdout: Option<String>,
         /// What the script printed to stderr with `print(..., file=sys.stderr)` before the
@@ -133,6 +135,8 @@ pub enum Error {
         /// The open run's id.
         run_id: u64,
     },
+    /// The backend can't write the session as bytes, for this reason.
+    Dump(Box<dyn error::Error + Send + Sync>),
     /// The backend can't load these bytes as a session, for this reason.
     Restore(Box<dyn error::Error + Send + Sync>),
     /// The bytes don't end in the tag that the builder's signing key makes for them: the key
@@ -257,9 +261,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     }
 
     /// Cancels the run with `run_id` that `execute` left running, and says whether that run was
-    /// open. The session is idle again with the globals the script had set, and the host's
-    /// answer to the call the script waits on is dropped. Cancelling any other run changes
-    /// nothing.
+    /// open. The session is idle again with the globals the script had set, unless the backend
+    /// lost them, which the next status reports as `restarted`. The host's answer to the call the
+    /// script waits on is dropped. Cancelling any other run changes nothing.
     pub async fn cancel(&mut self, run_id: u64) -> bool {
         let Some(run) = self.take_run_if(|run| run.id == run_id) else {
             return false;
@@ -279,11 +283,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
 
     /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
     /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
-    /// [`Error::RunOpen`].
+    /// [`Error::RunOpen`], and bytes the backend can't write are [`Error::Dump`].
     pub async fn dump(&mut self) -> Result<Vec<u8>, Error> {
         match &mut self.state {
             Some(State::Idle(session)) => {
-                let mut bytes = self.backend.dump(session).await;
+                let mut bytes = self.backend.dump(session).await.map_err(Error::Dump)?;
                 if let Some(key) = self.signing_key {
                     let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
                     bytes.extend_from_slice(&tag);
@@ -406,6 +410,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             result: Err(format!("run {} expired", run.id)),
             streams,
             session,
+            restarted: false,
         };
         Some(self.end_run(ending, run.answered_calls))
     }
@@ -414,12 +419,13 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// printed to stdout and stderr become the status. The result gets its share of
     /// [`Limits::output_chars`] against both streams together, and the two streams then share
     /// the rest. The status is `restarted` if the session started fresh since the last status
-    /// that was.
+    /// that was, or if the backend says it restarted before this script.
     fn end_run(&mut self, ending: Ending<B>, answered_calls: Vec<host::Call>) -> Status {
         let Ending {
             result,
             streams,
             session,
+            restarted,
         } = ending;
         self.state = Some(State::Idle(session));
         let result_chars = match &result {
@@ -436,7 +442,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let (stdout_share, stderr_share) = split_budget(streams_share, stdout_chars, stderr_chars);
         let stdout = (!stdout.is_empty()).then(|| cut_text(stdout, stdout_share));
         let stderr = (!stderr.is_empty()).then(|| cut_text(stderr, stderr_share));
-        let restarted = mem::take(&mut self.unreported_restart);
+        let restarted = mem::take(&mut self.unreported_restart) || restarted;
         match result {
             Ok(value) => Status::Finished {
                 value: cut_value(value, result_share),
@@ -608,6 +614,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RunOpen { run_id } => write!(f, "run {run_id} is still running"),
+            Self::Dump(error) => write!(f, "can't dump the session: {error}"),
             Self::Restore(error) => write!(f, "can't restore the session: {error}"),
             Self::SignatureMismatch => f.write_str("the signing key didn't sign these bytes"),
         }
@@ -618,7 +625,7 @@ impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::RunOpen { .. } | Self::SignatureMismatch => None,
-            Self::Restore(error) => Some(error.as_ref()),
+            Self::Dump(error) | Self::Restore(error) => Some(error.as_ref()),
         }
     }
 }
