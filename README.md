@@ -75,9 +75,9 @@ impl Host for Echo {
 
 let host = Echo;
 let tools = schema::list_mcp_tools(&host.tools());
-let mut sandbox = Sandbox::builder(host).build();
+let mut sandbox = Sandbox::builder(host).build().await;
 // Hand `tools` to the model. When it calls execute, run the code and send the Status JSON back.
-let status = sandbox.execute("echo(text='hello')").await;
+let status = sandbox.execute("echo(text='hello')", false).await;
 let reply = serde_json::to_value(&status).unwrap();
 ```
 

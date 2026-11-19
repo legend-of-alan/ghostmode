@@ -73,7 +73,8 @@ fn measure_time_per_call(field: CallField, arg_size_bytes: usize) -> Duration {
             calls_per_execute: CALL_COUNT as usize,
             ..Limits::default()
         };
-        let mut sandbox = Sandbox::builder(CloneHost { field }).limits(limits).build();
+        let builder = Sandbox::builder(CloneHost { field }).limits(limits);
+        let mut sandbox = executor::block_on(builder.build());
         expect_finished(executor::block_on(
             sandbox.execute(&format!("payload = 'x' * {arg_size_bytes}"), false),
         ));
