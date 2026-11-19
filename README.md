@@ -26,7 +26,10 @@ The evidence:
 
 ## How it works
 
-![The model at the provider sends execute or poll to the caller. The caller passes it to the Sandbox, where Monty runs the script. Tool calls go to the host, which reaches an MCP server only if it is mcp::Server.](assets/how-it-works.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.png">
+  <img src="assets/how-it-works.png" alt="The model at the provider sends execute or poll to the caller. The caller passes it to the Sandbox, where Monty runs the script. Tool calls go to the host, which reaches an MCP server only if it is mcp::Server.">
+</picture>
 
 The model is the LLM. It runs at the model provider, not on your machine. It never runs code. It only sees two tools, `execute` and `poll`, and it sends back tool calls with `code` or a `run_id`.
 
