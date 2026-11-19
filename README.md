@@ -3,8 +3,6 @@
 
 # Ghost Mode
 
-> Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
-
 Ghost Mode is a Rust library that brings Code Mode to agents. With normal tool calls, every result goes back to the model before it can ask for the next one. Ghost Mode lets the model write a short Python script that chains the calls itself, so intermediate results never go back to the model.
 
 Think about it like this: normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
