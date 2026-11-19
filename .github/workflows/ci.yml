@@ -44,8 +44,10 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
 
+      # Each check that depends on features runs once for the default build and once with every feature.
       - name: clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
+        shell: bash
+        run: for features in "" --all-features; do cargo clippy --all-targets --locked $features -- -D warnings; done
 
       - name: guardrails
         if: runner.os == 'Linux'
@@ -69,17 +71,22 @@ jobs:
               } END { exit bad }' "$f" || repeats=1
           done
           [ -z "$repeats" ] || { echo "Rename each one, or end its line with '// repeats module: <reason>' (CONTRIBUTING.md Naming rule 8)."; exit 1; }
+          # The default build brings no runtime: tokio is only for opt-in features.
+          (! cargo tree -e normal --locked --target all --prefix none | grep -E '^tokio ')
           # ghostmode is MIT: every AND term of every license in its tree must offer a permissive choice.
-          cargo tree -e normal --locked --target all --prefix none --no-dedupe --format '{l}' | sort -u | awk '
-            { terms = $0; gsub(/[()]/, "", terms); gsub(/ *\/ */, " OR ", terms)
-              n = split(terms, ands, / AND /)
-              for (i = 1; i <= n; i++) {
-                free = 0; m = split(ands[i], ors, / OR /)
-                for (j = 1; j <= m; j++) if (ors[j] ~ /^ *(MIT|Apache-2\.0( WITH LLVM-exception)?|Unlicense|Unicode-3\.0|Unicode-DFS-2016|BlueOak-1\.0\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0) *$/) free = 1
-                if (!free) { print $0; bad = 1 }
+          for features in "" --all-features; do
+            cargo tree -e normal --locked --target all --prefix none --no-dedupe --format '{l}' $features | sort -u | awk '
+              { terms = $0; gsub(/[()]/, "", terms); gsub(/ *\/ */, " OR ", terms)
+                n = split(terms, ands, / AND /)
+                for (i = 1; i <= n; i++) {
+                  free = 0; m = split(ands[i], ors, / OR /)
+                  for (j = 1; j <= m; j++) if (ors[j] ~ /^ *(MIT|Apache-2\.0( WITH LLVM-exception)?|Unlicense|Unicode-3\.0|Unicode-DFS-2016|BlueOak-1\.0\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0) *$/) free = 1
+                  if (!free) { print $0; bad = 1 }
+                }
               }
-            }
-            END { exit bad }'
+              END { exit bad }'
+          done
 
       - name: test
-        run: cargo test --locked
+        shell: bash
+        run: for features in "" --all-features; do cargo test --locked $features; done
