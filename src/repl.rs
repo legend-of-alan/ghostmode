@@ -64,12 +64,14 @@ impl Repl {
 
     /// The idle session that `bytes` from [`Repl::dump_session`] hold, running under
     /// [`Repl::set_limits_and_os_policy`] whatever limits it was dumped with. A dump of a
-    /// suspended or one-shot run is [`DumpError::Unsupported`].
+    /// suspended or one-shot run is [`DumpError::Unsupported`], whose `found` is this build's
+    /// dump version.
     pub(crate) fn load_session(bytes: &[u8], limits: &Limits) -> Result<Box<MontyRepl>, DumpError> {
         let Session::Idle(mut session) = Dump::load(bytes)?.state else {
             return Err(DumpError::Unsupported {
                 found: DUMP_VERSION,
-                reason: "ghostmode restores only an idle session".to_string(),
+                reason: "the dump holds a run, and ghostmode restores only an idle session"
+                    .to_string(),
             });
         };
         Self::set_limits_and_os_policy(&mut session, limits);

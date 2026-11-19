@@ -1,5 +1,5 @@
 use cucumber::{then, when};
-use monty::DumpError;
+use ghostmode::DumpError;
 
 use crate::{Request, World};
 

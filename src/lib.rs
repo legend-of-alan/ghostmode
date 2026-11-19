@@ -9,4 +9,5 @@ mod sandbox;
 pub mod schema;
 mod value;
 
+pub use monty::DumpError;
 pub use sandbox::{Builder, Error, Limits, Sandbox, Status};
