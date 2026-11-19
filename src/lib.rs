@@ -1,14 +1,13 @@
 //! Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and
 //! the host provides the tools the script calls. The model sees two tools, `execute` and `poll`.
 //!
-//! A sandbox runs scripts in a [`backend::Backend`]. The default backend, [`repl::Repl`], runs
+//! A sandbox runs scripts in a [`backend::Backend`]. The default backend, [`backend::Monty`], runs
 //! them inside the caller's process.
 
 pub mod backend;
 pub mod host;
 #[cfg(feature = "rmcp")]
 pub mod mcp;
-pub mod repl;
 mod sandbox;
 pub mod schema;
 mod value;

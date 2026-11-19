@@ -8,8 +8,8 @@
 
 use std::{error, mem};
 
-pub use monty::DumpError;
-use monty::{
+pub use ::monty::DumpError;
+use ::monty::{
     DUMP_VERSION, Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, Session,
     SessionRef,
 };
@@ -19,7 +19,7 @@ use monty_types::{
 };
 use serde_json::Value;
 
-use crate::backend::{Backend, Prints, Progress};
+use crate::backend::{Backend, Progress, Streams};
 use crate::host::{self, Host};
 use crate::sandbox::{Builder, Limits, Sandbox};
 use crate::value;
@@ -28,26 +28,26 @@ use crate::value;
 const SCRIPT_NAME: &str = "script.py";
 
 /// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] makes it.
-pub struct Repl {
+pub struct Monty {
     tool_ids: Vec<String>,
 }
 
-/// A script suspended at a tool call in a [`Repl`], with what it has printed so far.
+/// A script suspended at a tool call in [`Monty`], with what it has printed so far.
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,
 }
 
-impl<H: Host> Sandbox<H, Repl> {
+impl<H: Host> Sandbox<H, Monty> {
     /// A builder for a sandbox whose scripts call `host`'s tools and run in Monty inside this
     /// process.
-    pub fn builder(host: H) -> Builder<H, Repl> {
+    pub fn builder(host: H) -> Builder<H, Monty> {
         let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
-        Builder::new(host, Repl { tool_ids })
+        Builder::new(host, Monty { tool_ids })
     }
 }
 
-impl Backend for Repl {
+impl Backend for Monty {
     type Session = Box<MontyRepl>;
     type Suspension = Suspension;
 
@@ -103,13 +103,13 @@ impl Backend for Repl {
         self.run(monty_progress, streams)
     }
 
-    async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Prints) {
+    async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Streams) {
         let session = Box::new(suspension.function_call.into_repl());
         (session, split_streams(suspension.streams))
     }
 
     async fn dump(&self, session: &mut Box<MontyRepl>) -> Vec<u8> {
-        monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session))
+        ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session))
             .expect("Monty serializes every idle session")
     }
 
@@ -132,7 +132,7 @@ impl Backend for Repl {
     }
 }
 
-impl Repl {
+impl Monty {
     /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.
     /// Every other suspension is answered here: an unknown name raises `NameError`, an OS call
     /// gets Monty's no-handler answer, and awaiting a tool raises `RuntimeError`. What the script
@@ -147,14 +147,14 @@ impl Repl {
                 Err(failure) => {
                     return Progress::Ended {
                         result: Err(failure.error.to_string()),
-                        prints: split_streams(streams),
+                        streams: split_streams(streams),
                         session: Box::new(failure.repl),
                     };
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
                     return Progress::Ended {
                         result: Ok(value::to_json(value.as_ref())),
-                        prints: split_streams(streams),
+                        streams: split_streams(streams),
                         session: Box::new(repl),
                     };
                 }
@@ -228,13 +228,13 @@ fn set_limits_and_os_policy(session: &mut MontyRepl, limits: &Limits) {
 }
 
 /// What a script printed into `streams`, split into stdout and stderr.
-fn split_streams(streams: CollectedStreams) -> Prints {
-    let mut prints = Prints::default();
+fn split_streams(streams: CollectedStreams) -> Streams {
+    let mut split = Streams::default();
     for (stream, text) in streams.into_entries() {
         match stream {
-            PrintStream::Stdout => prints.stdout.push_str(&text),
-            PrintStream::Stderr => prints.stderr.push_str(&text),
+            PrintStream::Stdout => split.stdout.push_str(&text),
+            PrintStream::Stderr => split.stderr.push_str(&text),
         }
     }
-    prints
+    split
 }

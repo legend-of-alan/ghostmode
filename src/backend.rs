@@ -7,6 +7,11 @@ use serde_json::Value;
 use crate::host;
 use crate::sandbox::Limits;
 
+#[cfg(feature = "monty")]
+pub use self::monty::{DumpError, Monty};
+
+mod monty;
+
 /// Runs a sandbox's scripts in Python sessions whose globals persist from one script to the
 /// next. It holds no session: each method takes the idle session, or the script suspended at a
 /// tool call, by value, and its [`Progress`] hands that on.
@@ -49,7 +54,7 @@ pub trait Backend: Sized {
     fn abandon(
         &self,
         suspension: Self::Suspension,
-    ) -> impl Future<Output = (Self::Session, Prints)> + Send;
+    ) -> impl Future<Output = (Self::Session, Streams)> + Send;
 
     /// The bytes of the idle `session`, which [`Backend::restore`] reads back.
     fn dump(&self, session: &mut Self::Session) -> impl Future<Output = Vec<u8>> + Send;
@@ -78,7 +83,7 @@ pub enum Progress<B: Backend> {
         /// The value of the script's last expression, or its traceback.
         result: Result<Value, String>,
         /// What the script printed.
-        prints: Prints,
+        streams: Streams,
         /// The idle session, with the globals the script set.
         session: B::Session,
     },
@@ -86,7 +91,7 @@ pub enum Progress<B: Backend> {
 
 /// What a script printed, each stream in the order it was printed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Prints {
+pub struct Streams {
     /// What the script printed to stdout.
     pub stdout: String,
     /// What the script printed to stderr.

@@ -1,5 +1,5 @@
 use cucumber::{given, then, when};
-use ghostmode::repl::DumpError;
+use ghostmode::backend::DumpError;
 
 use crate::{Request, World};
 

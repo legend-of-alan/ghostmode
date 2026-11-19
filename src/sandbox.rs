@@ -12,7 +12,7 @@ use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
-use crate::backend::{Backend, Prints, Progress};
+use crate::backend::{Backend, Progress, Streams};
 use crate::host::{self, Host};
 
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
@@ -376,9 +376,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             }
             Progress::Ended {
                 result,
-                prints,
+                streams,
                 session,
-            } => Some(self.end_run(session, result, answered_calls, prints)),
+            } => Some(self.end_run(session, result, answered_calls, streams)),
         }
     }
 
@@ -386,9 +386,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     async fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.limits.idle_timeout?;
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
-        let (session, prints) = self.backend.abandon(run.suspension).await;
+        let (session, streams) = self.backend.abandon(run.suspension).await;
         let error = format!("run {} expired", run.id);
-        Some(self.end_run(session, Err(error), run.answered_calls, prints))
+        Some(self.end_run(session, Err(error), run.answered_calls, streams))
     }
 
     /// Ends the run: `session` is idle again, and the script's result and what it printed to
@@ -401,21 +401,21 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         session: B::Session,
         result: Result<Value, String>,
         answered_calls: Vec<host::Call>,
-        prints: Prints,
+        streams: Streams,
     ) -> Status {
         self.state = Some(State::Idle(session));
         let result_chars = match &result {
             Ok(value) => count_chars(value),
             Err(error) => error.chars().count(),
         };
-        let Prints { stdout, stderr } = prints;
+        let Streams { stdout, stderr } = streams;
         let (stdout_chars, stderr_chars) = (stdout.chars().count(), stderr.chars().count());
-        let (result_share, prints_share) = split_budget(
+        let (result_share, streams_share) = split_budget(
             self.limits.output_chars,
             result_chars,
             stdout_chars + stderr_chars,
         );
-        let (stdout_share, stderr_share) = split_budget(prints_share, stdout_chars, stderr_chars);
+        let (stdout_share, stderr_share) = split_budget(streams_share, stdout_chars, stderr_chars);
         let stdout = (!stdout.is_empty()).then(|| cut_text(stdout, stdout_share));
         let stderr = (!stderr.is_empty()).then(|| cut_text(stderr, stderr_share));
         let restarted = mem::take(&mut self.unreported_restart);

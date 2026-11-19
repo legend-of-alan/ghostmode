@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
-use ghostmode::repl::Repl;
+use ghostmode::backend::Monty;
 use ghostmode::{Builder, Limits, Sandbox, Status};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
@@ -34,7 +34,7 @@ struct World {
     poll_wait: Option<Duration>,
     limits: Option<Limits>,
     signing_key: Option<[u8; 32]>,
-    sandbox: Option<Sandbox<test_host::TestHost, Repl>>,
+    sandbox: Option<Sandbox<test_host::TestHost, Monty>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,
@@ -75,7 +75,7 @@ enum Reply {
 impl World {
     /// A builder for the scenario's sandbox, with the host, waits, limits and signing key its
     /// steps set.
-    fn builder(&self) -> Builder<test_host::TestHost, Repl> {
+    fn builder(&self) -> Builder<test_host::TestHost, Monty> {
         let mut builder = Sandbox::builder(self.host.clone());
         if let Some(wait) = self.execute_wait {
             builder = builder.execute_wait(wait);

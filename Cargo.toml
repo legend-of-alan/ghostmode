@@ -21,7 +21,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [features]
 default = ["monty"]
-# Runs scripts in Monty inside the caller's process, as `repl::Repl`.
+# Runs scripts in Monty inside the caller's process, as `backend::Monty`.
 monty = ["dep:monty", "dep:monty-types"]
 # Offers a connected MCP server's tools to scripts as `mcp::Server`.
 rmcp = ["dep:rmcp"]
