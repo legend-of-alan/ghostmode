@@ -98,7 +98,7 @@ fn execute_description_contains(world: &mut World, text: String) {
 }
 
 #[then(regex = r"^the execute description contains:$")]
-fn execute_description_contains_docstring(world: &mut World, step: &Step) {
+fn execute_description_contains_block(world: &mut World, step: &Step) {
     let text = step.docstring.as_ref().expect("a docstring").trim();
     let description = execute_description(world);
     assert!(description.contains(text), "{description}");

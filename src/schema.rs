@@ -100,7 +100,11 @@ fn format_stub(tool: &host::Tool) -> String {
     } else {
         format!("*, {}", args.join(", "))
     };
-    let docstring = tool.description.replace('\n', "\n    ");
+    let mut docstring = tool.description.replace('\\', r"\\");
+    if docstring.contains(r#"""""#) || docstring.ends_with('"') {
+        docstring = docstring.replace('"', r#"\""#);
+    }
+    let docstring = docstring.replace('\n', "\n    ");
     format!(
         "def {}({args}) -> Any:\n    \"\"\"{docstring}\"\"\"",
         tool.id
@@ -137,10 +141,19 @@ fn to_python_literal(value: &Value) -> String {
     }
 }
 
+/// The words Python reserves, which a script can't call as a function.
+const PYTHON_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
 /// Whether a script can call a function named `id`: `id` is ASCII letters, digits and `_`,
-/// and doesn't start with a digit.
-fn is_python_identifier(id: &str) -> bool {
+/// doesn't start with a digit, and isn't a Python keyword.
+pub(crate) fn is_python_identifier(id: &str) -> bool {
     !id.is_empty()
         && !id.starts_with(|c: char| c.is_ascii_digit())
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !PYTHON_KEYWORDS.contains(&id)
 }

@@ -17,18 +17,27 @@ Feature: The execute description lists each host tool as a typed Python stub
     Then the execute description contains "def pick(*, choice: <type>) -> Any:"
 
     Examples:
-      | schema                                          | type             |
-      | {"type": "string"}                              | str              |
-      | {"type": "integer"}                             | int              |
-      | {"type": "number"}                              | float            |
-      | {"type": "boolean"}                             | bool             |
-      | {"type": "array", "items": {"type": "integer"}} | list[int]        |
-      | {"type": "object"}                              | dict[str, Any]   |
+      | schema                                          | type              |
+      | {"type": "string"}                              | str               |
+      | {"type": "integer"}                             | int               |
+      | {"type": "number"}                              | float             |
+      | {"type": "boolean"}                             | bool              |
+      | {"type": "array", "items": {"type": "integer"}} | list[int]         |
+      | {"type": "object"}                              | dict[str, Any]    |
       | {"type": "string", "enum": ["a", "b"]}          | Literal["a", "b"] |
-      | {"description": "No type."}                     | Any              |
+      | {"description": "No type."}                     | Any               |
 
-  Scenario: A tool whose id isn't a Python identifier gets no stub
-    Given a host whose `get-room` answers {}
+  Scenario: A description's backslashes and quotes are escaped in the docstring
+    Given a host whose `find` description is "Finds a\b or """x""""
+    Then the execute description contains """"Finds a\\b or \"\"\"x\"\"\"""""
+
+  Scenario Outline: A tool whose id isn't a Python identifier gets no stub
+    Given a host whose `<id>` answers {}
     And a host whose `ping` answers {}
     Then the execute description contains "def ping() -> Any:"
-    And the execute description doesn't contain "get-room"
+    And the execute description doesn't contain "def <id>("
+
+    Examples:
+      | id       |
+      | get-room |
+      | class    |
