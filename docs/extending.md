@@ -116,7 +116,7 @@ For a host that does real I/O, see `mcp::Server` in `src/mcp.rs`. It clones what
 - **The future may be dropped.** The `Sandbox` drops the future when the call passes `call_timeout`, when the caller calls `Sandbox::cancel` or `Sandbox::reset`, and when the run passes `idle_timeout`. Don't rely on the future running to the end.
 - **The tool list is read once for Monty.** `Sandbox::builder` calls `tools` once and gives Monty the tool ids. A tool that `tools` adds later is not callable in that `Sandbox`.
 - **Arguments are keywords.** Monty raises TypeError for a positional argument before the call reaches the host, so `call.args` holds every argument.
-- **Keys come sorted.** `call.args`, the host's answers and the script's results are JSON objects, which serde_json sorts by key. To keep the order the script wrote, turn on serde_json's `preserve_order` feature in your own `Cargo.toml`.
+- **Keys come sorted.** Objects in `call.args`, the host's answers and the script's results come with their keys sorted. To keep insertion order, turn on serde_json's `preserve_order` feature in your own `Cargo.toml`.
 - **Answer every call.** Use Refused for a call the host won't run, such as one without permission. Use Failed for a call that ran and went wrong. Answer an unknown `tool_id` with Failed, as `mcp::Server` does.
 
 ## Write a backend
