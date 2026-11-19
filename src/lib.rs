@@ -10,6 +10,5 @@ pub mod host;
 pub mod mcp;
 mod sandbox;
 pub mod schema;
-mod value;
 
 pub use sandbox::{Builder, Error, Limits, Sandbox, Status};

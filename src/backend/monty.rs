@@ -22,7 +22,8 @@ use serde_json::Value;
 use crate::backend::{Backend, Progress, Streams};
 use crate::host::{self, Host};
 use crate::sandbox::{Builder, Limits, Sandbox};
-use crate::value;
+
+mod value;
 
 /// The file name a script's traceback names.
 const SCRIPT_NAME: &str = "script.py";
