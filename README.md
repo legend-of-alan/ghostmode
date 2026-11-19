@@ -3,24 +3,32 @@
 
 # Ghost Mode
 
-> Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
+Ghost Mode is a Rust library that brings Code Mode to agents. With normal tool calls, every result goes back to the model before it can ask for the next one. Ghost Mode lets the model write a short Python script that chains the calls itself, so intermediate results never go back to the model.
 
-Let your agent write code instead of making tool calls one at a time. The core is async and doesn't tie you to a runtime.
+Think about it like this: normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
 
-## Why Code Mode
+Say the model needs to know why a pull request's checks failed. Each step needs the one before it. The pull request gives the commit, the commit gives the check runs, and each failed run gives a log. With normal tool calls, that's a round trip to the model per step, and every full result goes through the model. With Ghost Mode, the model sends one script:
 
-Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
+```python
+pr = get_pull_request(number=42)
+runs = list_check_runs(commit=pr["head_sha"])
+failed = [run for run in runs if run["conclusion"] == "failure"]
+[{"check": run["name"], "log": get_log(run_id=run["id"])[-500:]} for run in failed]
+```
 
-With normal tool calls, the model calls one tool, reads the whole result, then calls the next. Every result goes through the model, and each one costs tokens and a round trip. In Ghost Mode the model writes a short Python script instead. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
+The script runs inside your process. The model only gets the last 500 characters of each failed log, not the pull request, every check run, and every full log.
 
-That adds up fast:
+## Why Ghost Mode
 
-- **Way fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **Fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **API bills up to 70% lower.** Across eight models, code mode cut cost by 70.6% for GPT-5.4 and 40.7% on average ([benchmark](https://www.ijcaonline.org/archives/volume187/number136/mbat-ijca-2026-e10508249e55.pdf)). Intermediate results never reach the model, so you aren't billed for them as input on every later step.
 - **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
+
+> Savings depend on the model. In the eight-model benchmark, weaker models retried failed scripts until some runs cost more than plain tool calls, and Gemini models passed fewer tasks. A [pre-registered study](https://arxiv.org/abs/2611.19123) measured 70% to 90% fewer tokens with three open-weight models. In Ghost Mode, the `Limits` you build the `Sandbox` with cap how much any one result can add (40,000 characters by default).
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tool definitions, `execute` and `poll`. Monty runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
@@ -85,9 +93,11 @@ let reply = serde_json::to_value(&status).unwrap();
 
 `Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Monty doesn't check dumps, so before you store them where others can write, set `Builder::signing_key`: restore then refuses bytes the key didn't sign. The tag doesn't hide what the session holds.
 
+To offer tools some other way, or to run scripts in something other than Monty, see [Writing a host or a backend](docs/extending.md).
+
 ## Build from source
 
-All you need is [rustup](https://rustup.rs). It grabs the Rust version pinned in `rust-toolchain.toml`.
+You need [rustup](https://rustup.rs). It installs the Rust version that `rust-toolchain.toml` pins.
 
 ```sh
 git clone https://github.com/legend-of-alan/ghostmode.git
@@ -96,12 +106,12 @@ cargo build --locked
 cargo test --locked
 ```
 
-Add `--all-features` to build the `rmcp` feature too. Fmt, clippy and the rest of CI live in [CONTRIBUTING.md](CONTRIBUTING.md).
+The default build includes Monty. Add `--all-features` to also build `mcp::Server`, which the `rmcp` feature turns on. [CONTRIBUTING.md](CONTRIBUTING.md) lists every check that CI runs.
 
 ## Contributing
 
-Contributions are issues only for now. See [CONTRIBUTING.md](CONTRIBUTING.md).
+For now, contributions are issues only. Open an issue and pick the form that fits. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
 
 ## License
 
-Licensed under [MIT](LICENSE).
+Ghost Mode is under the [MIT license](LICENSE).
