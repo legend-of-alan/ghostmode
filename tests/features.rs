@@ -32,7 +32,7 @@ struct World {
     execute_wait: Option<Duration>,
     poll_wait: Option<Duration>,
     limits: Option<Limits>,
-    signing_key: Option<Vec<u8>>,
+    signing_key: Option<[u8; 32]>,
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
@@ -82,8 +82,8 @@ impl World {
         if let Some(limits) = self.limits {
             builder = builder.limits(limits);
         }
-        if let Some(key) = &self.signing_key {
-            builder = builder.signing_key(key.clone());
+        if let Some(key) = self.signing_key {
+            builder = builder.signing_key(key);
         }
         builder
     }

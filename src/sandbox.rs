@@ -26,7 +26,7 @@ pub struct Sandbox<H> {
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
-    signing_key: Option<Vec<u8>>,
+    signing_key: Option<[u8; 32]>,
 }
 
 /// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`].
@@ -35,7 +35,7 @@ pub struct Builder<H> {
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
-    signing_key: Option<Vec<u8>>,
+    signing_key: Option<[u8; 32]>,
 }
 
 /// How many bytes the HMAC-SHA256 tag takes that a signing key appends to a dump.
@@ -280,8 +280,8 @@ impl<H: Host> Sandbox<H> {
         match &self.state {
             Some(State::Idle(session)) => {
                 let mut bytes = Repl::dump_session(session);
-                if let Some(key) = &self.signing_key {
-                    let tag = compute_hmac(key, &bytes).finalize().into_bytes();
+                if let Some(key) = self.signing_key {
+                    let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
                     bytes.extend_from_slice(&tag);
                 }
                 Ok(bytes)
@@ -499,10 +499,10 @@ impl<H: Host> Builder<H> {
     /// no signing.
     ///
     /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
-    /// signed restores, including an older one. Use a random key of at least 32 bytes, and only
-    /// for dumps. The key isn't wiped from memory when the sandbox drops.
-    pub fn signing_key(mut self, key: impl Into<Vec<u8>>) -> Self {
-        self.signing_key = Some(key.into());
+    /// signed restores, including an older one. Use the key only for dumps. The key isn't wiped
+    /// from memory when the sandbox drops.
+    pub fn signing_key(mut self, key: [u8; 32]) -> Self {
+        self.signing_key = Some(key);
         self
     }
 
@@ -521,12 +521,12 @@ impl<H: Host> Builder<H> {
     /// bytes from anyone else can panic, abort or hang the process, so restore only bytes you
     /// made.
     pub fn restore(self, bytes: &[u8]) -> Result<Sandbox<H>, Error> {
-        let session_bytes = match &self.signing_key {
+        let session_bytes = match self.signing_key {
             Some(key) => {
                 let (session_bytes, tag) = bytes
                     .split_last_chunk::<TAG_BYTES>()
                     .ok_or(Error::SignatureMismatch)?;
-                compute_hmac(key, session_bytes)
+                compute_hmac(&key, session_bytes)
                     .verify_slice(tag)
                     .map_err(|_| Error::SignatureMismatch)?;
                 session_bytes

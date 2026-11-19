@@ -29,14 +29,14 @@ fn restore_dump(world: &mut World) {
     world.restore(&bytes);
 }
 
-#[given(regex = r#"^a sandbox whose signing key is "(.*)"$"#)]
-fn sandbox_signing_key(world: &mut World, key: String) {
-    world.signing_key = Some(key.into_bytes());
+#[given(regex = r#"^a sandbox whose signing key is "([A-Z])"$"#)]
+fn sandbox_signing_key(world: &mut World, letter: char) {
+    world.signing_key = Some([letter as u8; 32]);
 }
 
-#[when(regex = r#"^the caller restores the dump under key "(.*)" into a new sandbox$"#)]
-fn restore_dump_under_key(world: &mut World, key: String) {
-    world.signing_key = Some(key.into_bytes());
+#[when(regex = r#"^the caller restores the dump under key "([A-Z])" into a new sandbox$"#)]
+fn restore_dump_under_key(world: &mut World, letter: char) {
+    world.signing_key = Some([letter as u8; 32]);
     restore_dump(world);
 }
 
