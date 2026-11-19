@@ -15,17 +15,17 @@ Code Mode fixes that. The model writes a short Python script that calls your too
 
 What you get:
 
-- **Fewer tokens.** Big intermediate results stay in the script.
-- **Fewer round trips.** One `execute` can make many tool calls.
-- **Smarter tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code.
+- **Way fewer tokens.** Big intermediate results stay in the script. Anthropic cut one workflow from 150,000 tokens to 2,000, and Cloudflare fits its whole 2,500-endpoint API in about 1,000 tokens instead of 1.17 million.
+- **Fewer round trips.** One `execute` can make many tool calls. CodeAct needed up to 30% fewer actions.
+- **Smarter tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code. CodeAct got up to 20% higher success.
 
 What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tools, `execute` and `poll`. The script runs in Monty, a Python interpreter inside your process, so there's no container or extra service to run. The script can only reach the outside world through your tools.
 
-The evidence:
+Where those numbers come from:
 
-- [Executable Code Actions Elicit Better LLM Agents](https://arxiv.org/abs/2402.01030) (CodeAct) tested 17 models and found code actions beat JSON and text tool calls, with up to 20% higher success.
-- [Cloudflare's Code Mode post](https://blog.cloudflare.com/code-mode/) found agents handle more tools, and more complex ones, when the tools look like an API to write code against.
-- [Anthropic's code execution with MCP post](https://www.anthropic.com/engineering/code-execution-with-mcp) walks through how tool definitions and intermediate results fill the context, and how running code fixes both.
+- [Executable Code Actions Elicit Better LLM Agents](https://arxiv.org/abs/2402.01030) (CodeAct) tested 17 models on tool tasks. Code actions beat JSON and text tool calls by up to 20 points of success while needing up to 30% fewer actions.
+- [Anthropic's code execution with MCP post](https://www.anthropic.com/engineering/code-execution-with-mcp) cut one example from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front.
+- [Cloudflare's Code Mode MCP post](https://blog.cloudflare.com/code-mode-mcp/) puts the whole Cloudflare API, over 2,500 endpoints, behind two code tools in about 1,000 tokens. The same API as plain MCP tools would take 1.17 million.
 
 ## How it works
 
