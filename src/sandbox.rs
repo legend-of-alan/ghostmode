@@ -497,6 +497,10 @@ impl<H: Host> Builder<H> {
     /// The secret key that signs dumps. With it, [`Sandbox::dump`] appends an HMAC-SHA256 tag,
     /// and [`Builder::restore`] checks the tag before Monty reads a byte. The default is unset,
     /// no signing.
+    ///
+    /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
+    /// signed restores, including an older one. Use a random key of at least 32 bytes, and only
+    /// for dumps.
     pub fn signing_key(mut self, key: impl Into<Vec<u8>>) -> Self {
         self.signing_key = Some(key.into());
         self

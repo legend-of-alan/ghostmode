@@ -47,11 +47,17 @@ fn restore_dump_without_tag(world: &mut World) {
     world.restore(&bytes);
 }
 
-#[when("the caller restores the dump with one byte flipped into a new sandbox")]
-fn restore_dump_with_byte_flipped(world: &mut World) {
+#[when(
+    regex = r"^the caller restores the dump with its (first|middle|last) byte flipped into a new sandbox$"
+)]
+fn restore_dump_with_byte_flipped(world: &mut World, position: String) {
     let mut bytes = world.dump.clone().expect("a dump");
-    let middle = bytes.len() / 2;
-    bytes[middle] ^= 1;
+    let index = match position.as_str() {
+        "first" => 0,
+        "middle" => bytes.len() / 2,
+        _ => bytes.len() - 1,
+    };
+    bytes[index] ^= 1;
     world.restore(&bytes);
 }
 
