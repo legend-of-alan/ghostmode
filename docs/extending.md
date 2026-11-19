@@ -20,11 +20,11 @@ sequenceDiagram
     participant Backend
     participant Host
     Caller->>Sandbox: execute(code, restart)
-    Sandbox->>Backend: feed_start(session, code)
+    Sandbox->>Backend: feed_start(session, code, tool_ids)
     Backend-->>Sandbox: Progress::Call with the call and the suspension
     Sandbox->>Host: call(call)
     Host-->>Sandbox: a future of Ok(value) or Err(host::Error)
-    Sandbox->>Backend: resume(suspension, answer)
+    Sandbox->>Backend: resume(suspension, answer, tool_ids)
     Backend-->>Sandbox: Progress::Ended with the result, the streams and the session
     Sandbox-->>Caller: Status, finished or failed
 ```
@@ -114,7 +114,7 @@ For a host that does real I/O, see `mcp::Server` in `src/mcp.rs`. It clones what
 
 - **The future owns its data.** `call` returns a `'static` future, so it can't borrow `self` or `call`. Clone what the future needs before you build it, as `mcp::Server` clones its rmcp peer.
 - **The future may be dropped.** The `Sandbox` drops the future when the call passes `call_timeout`, when the caller calls `Sandbox::cancel` or `Sandbox::reset`, and when the run passes `idle_timeout`. Don't rely on the future running to the end.
-- **The tool list is read once for Monty.** `Sandbox::builder` calls `tools` once and gives Monty the tool ids. A tool that `tools` adds later is not callable in that `Sandbox`.
+- **The tool list is read once.** `Builder::new` calls `tools` once, and the `Sandbox` hands the tool ids to the backend. A tool that `tools` adds later is not callable in that `Sandbox`, so build a new one.
 - **Arguments are keywords.** Monty raises TypeError for a positional argument before the call reaches the host, so `call.args` holds every argument.
 - **Answer every call.** Use Refused for a call the host won't run, such as one without permission. Use Failed for a call that ran and went wrong. Answer an unknown `tool_id` with Failed, as `mcp::Server` does.
 
@@ -130,9 +130,9 @@ The trait has two associated types:
 It has seven methods. Each returns a future that must be Send.
 
 - `new_session(limits)` makes an empty idle session. The session must stop a script that goes past the run time, memory or recursion depth in `limits`.
-- `feed_start(session, code)` runs `code` in the idle session. It returns Progress::Call when the script calls one of the host's tools, and Progress::Ended when the script ends.
-- `resume(suspension, answer)` gives the host's answer to the suspended call and runs on. An Ok value becomes the call's return value. A Refused error raises PermissionError, and a Failed error raises RuntimeError.
-- `abort(suspension, message)` ends the suspended script with a RuntimeError that carries `message`. The script can't catch this error.
+- `feed_start(session, code, tool_ids)` runs `code` in the idle session. It returns Progress::Call when the script calls one of the host's tools, whose ids are `tool_ids`, and Progress::Ended when the script ends.
+- `resume(suspension, answer, tool_ids)` gives the host's answer to the suspended call and runs on. An Ok value becomes the call's return value. A Refused error raises PermissionError, and a Failed error raises RuntimeError.
+- `abort(suspension, message, tool_ids)` ends the suspended script with a RuntimeError that carries `message`. The script can't catch this error.
 - `abandon(suspension)` drops the suspended script without running it further. It returns the idle session, with the globals the script set, and the `Streams` the script printed.
 - `dump(session)` returns the idle session as bytes.
 - `restore(bytes, limits)` loads the bytes from `dump` as an idle session, or returns an error for bytes it can't load.
@@ -148,13 +148,11 @@ The toy backend below treats the whole script as one tool id. It calls that tool
 use std::error;
 
 use ghostmode::backend::{Backend, Progress, Streams};
-use ghostmode::host::{self, Call, Host};
+use ghostmode::host::{self, Call};
 use ghostmode::{Builder, Limits};
 use serde_json::{Map, Value};
 
-struct OneCall {
-    tool_ids: Vec<String>,
-}
+struct OneCall;
 
 impl Backend for OneCall {
     type Session = ();
@@ -162,9 +160,9 @@ impl Backend for OneCall {
 
     async fn new_session(&self, _limits: &Limits) {}
 
-    async fn feed_start(&self, session: (), code: &str) -> Progress<Self> {
+    async fn feed_start(&self, session: (), code: &str, tool_ids: &[String]) -> Progress<Self> {
         let tool_id = code.trim().to_string();
-        if !self.tool_ids.contains(&tool_id) {
+        if !tool_ids.contains(&tool_id) {
             let result = Err(format!("NameError: name '{tool_id}' is not defined"));
             return Progress::Ended { result, streams: Streams::default(), session };
         }
@@ -172,7 +170,12 @@ impl Backend for OneCall {
         Progress::Call { call, suspension: () }
     }
 
-    async fn resume(&self, _suspension: (), answer: Result<Value, host::Error>) -> Progress<Self> {
+    async fn resume(
+        &self,
+        _suspension: (),
+        answer: Result<Value, host::Error>,
+        _tool_ids: &[String],
+    ) -> Progress<Self> {
         let result = answer.map_err(|error| match error {
             host::Error::Refused(reason) => format!("PermissionError: {reason}"),
             host::Error::Failed(message) => format!("RuntimeError: {message}"),
@@ -180,7 +183,7 @@ impl Backend for OneCall {
         Progress::Ended { result, streams: Streams::default(), session: () }
     }
 
-    async fn abort(&self, _suspension: (), message: String) -> Progress<Self> {
+    async fn abort(&self, _suspension: (), message: String, _tool_ids: &[String]) -> Progress<Self> {
         let result = Err(format!("RuntimeError: {message}"));
         Progress::Ended { result, streams: Streams::default(), session: () }
     }
@@ -202,8 +205,7 @@ impl Backend for OneCall {
     }
 }
 
-let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
-let mut sandbox = Builder::new(host, OneCall { tool_ids }).build().await;
+let mut sandbox = Builder::new(host, OneCall).build().await;
 ```
 
 `Sandbox::builder` only builds a `Sandbox` with `Monty`. For your own backend, use `Builder::new` with the host and the backend. The other `Builder` settings work the same.
@@ -212,7 +214,7 @@ For the real reference, see `Monty` in `src/backend/monty.rs`. Its `run` method 
 
 ### Rules for a backend
 
-- **Stop only for the host's tools.** Return Progress::Call only for a call to one of the host's tools, with keyword arguments only. The trait doesn't pass the tool ids, so give them to your backend when you build it, as `Sandbox::builder` does for `Monty`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name, TypeError for a positional argument and RuntimeError for an awaited tool, and it gives every OS call the no-handler answer.
+- **Stop only for the host's tools.** Return Progress::Call only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name, TypeError for a positional argument and RuntimeError for an awaited tool, and it gives every OS call the no-handler answer.
 - **Progress::Ended carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
 - **`abort` ends the script.** The script can't catch the error, so `abort` returns Progress::Ended. The `Sandbox` calls it when the script reaches `calls_per_execute` and when a call passes `call_timeout`.
 - **The backend enforces three limits.** `new_session` and `restore` get the `Limits`. The session stops a script at `run_time`, `memory_bytes` and `recursion_depth`. `run_time` counts only the script's own time, summed over the whole run, and not the time it waits on the host. The `Sandbox` enforces `calls_per_execute`, `call_timeout`, `idle_timeout` and `output_chars` itself.

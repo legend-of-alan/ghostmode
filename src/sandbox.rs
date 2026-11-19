@@ -12,6 +12,8 @@ use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
+#[cfg(feature = "monty")]
+use crate::backend::Monty;
 use crate::backend::{Backend, Progress, Streams};
 use crate::host::{self, Host};
 
@@ -19,6 +21,7 @@ use crate::host::{self, Host};
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
 pub struct Sandbox<H, B: Backend> {
     host: H,
+    tool_ids: Vec<String>,
     backend: B,
     state: Option<State<B>>,
     last_run_id: u64,
@@ -32,6 +35,7 @@ pub struct Sandbox<H, B: Backend> {
 /// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`] or [`Builder::new`].
 pub struct Builder<H, B> {
     host: H,
+    tool_ids: Vec<String>,
     backend: B,
     execute_wait: Duration,
     poll_wait: Duration,
@@ -208,7 +212,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            let progress = self.backend.feed_start(session, code).await;
+            let progress = self.backend.feed_start(session, code, &self.tool_ids).await;
             if let Some(status) = self.suspend_or_end(id, Vec::new(), progress).await {
                 return status;
             }
@@ -334,11 +338,15 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 Some(answer) => {
                     answered_calls.push(self.cut_args(call));
                     Span::current().record("call_count", answered_calls.len());
-                    self.backend.resume(suspension, answer).await
+                    self.backend
+                        .resume(suspension, answer, &self.tool_ids)
+                        .await
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    self.backend.abort(suspension, message).await
+                    self.backend
+                        .abort(suspension, message, &self.tool_ids)
+                        .await
                 }
             };
             if let Some(status) = self.suspend_or_end(id, answered_calls, progress).await {
@@ -360,7 +368,10 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             && let Progress::Call { suspension, .. } = progress
         {
             let message = format!("the script reached the call limit of {call_limit}");
-            progress = self.backend.abort(suspension, message).await;
+            progress = self
+                .backend
+                .abort(suspension, message, &self.tool_ids)
+                .await;
         }
         match progress {
             Progress::Call { call, suspension } => {
@@ -487,11 +498,24 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     }
 }
 
+#[cfg(feature = "monty")]
+impl<H: Host> Sandbox<H, Monty> {
+    /// A builder for a sandbox whose scripts call `host`'s tools and run in Monty inside this
+    /// process.
+    pub fn builder(host: H) -> Builder<H, Monty> {
+        Builder::new(host, Monty)
+    }
+}
+
 impl<H: Host, B: Backend> Builder<H, B> {
-    /// A builder for a sandbox whose scripts call `host`'s tools and run in `backend`.
+    /// A builder for a sandbox whose scripts call `host`'s tools and run in `backend`. It reads
+    /// the host's tool list here, once: a tool the host lists later is not callable in the
+    /// sandbox, and the backend gets the tool ids on every call that runs a script.
     pub fn new(host: H, backend: B) -> Self {
+        let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
         Self {
             host,
+            tool_ids,
             backend,
             execute_wait: Duration::from_secs(30),
             poll_wait: Duration::from_secs(10),
@@ -568,6 +592,7 @@ impl<H: Host, B: Backend> Builder<H, B> {
     fn build_with_session(self, session: B::Session) -> Sandbox<H, B> {
         Sandbox {
             host: self.host,
+            tool_ids: self.tool_ids,
             backend: self.backend,
             state: Some(State::Idle(session)),
             last_run_id: 0,
