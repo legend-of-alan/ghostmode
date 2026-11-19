@@ -6,13 +6,17 @@ Code Mode for Rust agents. The model writes a script, ghostmode runs it in a san
 
 ## Why Code Mode
 
-Agents usually call tools one at a time. Every result goes back through the model, even when the model only needs to hand it to the next tool. That costs tokens and time, and big results can blow past the context window.
+Your agent calls tools one at a time, and every result takes a trip through the model, even when the model just hands it to the next tool. You pay for those tokens, you wait on those round trips, and one big result can blow the context window.
 
-With Code Mode the model writes a short script instead. The script calls the tools, loops, filters and handles errors on its own, and the model only reads what the script returns.
+Code Mode fixes that. The model writes a short Python script that calls your tools, loops, filters and handles errors, and only the answer comes back.
 
-- **Fewer tokens.** Big intermediate results stay in the script and never hit the model's context.
+What you get:
+
+- **Fewer tokens.** Big intermediate results stay in the script.
 - **Fewer round trips.** One `execute` can make many tool calls.
-- **Better tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code.
+- **Smarter tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code.
+
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tools, `execute` and `poll`. The script runs in Monty, a Python interpreter inside your process, so there's no container or extra service to run. The script can only reach the outside world through your tools.
 
 The evidence:
 
