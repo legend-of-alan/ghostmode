@@ -207,7 +207,8 @@ async fn build<B: Backend + Send + 'static>(
 
 /// Runs the whole feature tree once against `backend` and says whether any scenario failed. A
 /// feature tagged `@rmcp` needs the `rmcp` feature and a Tokio runtime, so it runs only when it
-/// has both. A feature or scenario tagged `@monty` or `@pool` runs only against that backend.
+/// has both. A feature or scenario tagged `@monty` or `@pool` runs only against that backend. A
+/// `--name` regex narrows the run to the scenarios it matches, and these rules still apply.
 async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
     let run_rmcp = on_tokio && cfg!(feature = "rmcp");
     let backend_tag = match backend {
@@ -215,6 +216,8 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
         #[cfg(feature = "pool")]
         TestBackend::Pool(_) => "pool",
     };
+    let mut cli = cucumber::cli::Opts::parsed();
+    let name_filter = cli.re_filter.take();
     World::cucumber()
         .max_concurrent_scenarios(1)
         .fail_on_skipped()
@@ -222,11 +225,15 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
             world.backend = backend.clone();
             future::ready(()).boxed_local()
         })
+        .with_cli::<cucumber::cli::Empty>(cli)
         .filter_run("tests/features", move |feature, _, scenario| {
             let runs_rmcp = run_rmcp || !feature.tags.iter().any(|tag| tag == "rmcp");
             let runs_here = (feature.tags.iter().chain(&scenario.tags))
                 .all(|tag| !["monty", "pool"].contains(&tag.as_str()) || tag == backend_tag);
-            runs_rmcp && runs_here
+            let named = name_filter
+                .as_ref()
+                .is_none_or(|name| name.is_match(&scenario.name));
+            runs_rmcp && runs_here && named
         })
         .await
         .execution_has_failed()
