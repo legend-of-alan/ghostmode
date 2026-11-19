@@ -142,7 +142,7 @@ enum State<B: Backend> {
     Suspended(Run<B>),
 }
 
-/// A script suspended at a tool call the host has not answered yet.
+/// A script suspended at a tool call, with the host's answer still to be picked up.
 struct Run<B: Backend> {
     id: u64,
     answered_calls: Vec<host::Call>,
@@ -151,18 +151,6 @@ struct Run<B: Backend> {
     /// The host's answer to `call`, or `None` once the call timeout passes first.
     answer: BoxFuture<'static, Option<Result<Value, host::Error>>>,
     idle_since: Instant,
-}
-
-impl<B: Backend> Run<B> {
-    /// Whether the host has answered `call` or the call timeout has passed. A ready answer stays
-    /// in the run for the next wait.
-    fn is_answer_ready(&mut self) -> bool {
-        let Some(answer) = (&mut self.answer).now_or_never() else {
-            return false;
-        };
-        self.answer = future::ready(answer).boxed();
-        true
-    }
 }
 
 impl Default for Limits {
@@ -400,8 +388,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     async fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.limits.idle_timeout?;
         if let Some(State::Suspended(run)) = &mut self.state
-            && run.is_answer_ready()
+            && let Some(answer) = (&mut run.answer).now_or_never()
         {
+            run.answer = future::ready(answer).boxed();
             return None;
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
