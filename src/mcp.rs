@@ -12,8 +12,7 @@ use crate::host::{self, Call, Host, Tool};
 use crate::schema;
 
 /// A host that wraps the MCP server at the other end of `peer`: it offers the server's tools to
-/// scripts and sends each call to the server as `tools/call`. It lists the tools when built and
-/// again on `refresh`.
+/// scripts and sends each call to the server as `tools/call`. It lists the tools once, when built.
 pub struct Server {
     peer: Peer<RoleClient>,
     tools: Vec<Tool>,
@@ -24,20 +23,9 @@ pub struct Server {
 impl Server {
     /// Lists the server's tools over `peer`, a connected rmcp client.
     pub async fn new(peer: Peer<RoleClient>) -> Result<Self, Error> {
-        let mut server = Self {
-            peer,
-            tools: Vec::new(),
-            mcp_ids: HashMap::new(),
-        };
-        server.refresh().await?;
-        Ok(server)
-    }
-
-    /// Lists the server's tools again. On an `Err` it keeps the tools it had.
-    pub async fn refresh(&mut self) -> Result<(), Error> {
         let mut tools = Vec::new();
         let mut mcp_ids = HashMap::new();
-        for mcp_tool in self.peer.list_all_tools().await.map_err(Error::ListTools)? {
+        for mcp_tool in peer.list_all_tools().await.map_err(Error::ListTools)? {
             let mcp_id = mcp_tool.name.into_owned();
             let tool_id = to_tool_id(&mcp_id);
             if !schema::is_python_identifier(&tool_id) {
@@ -53,9 +41,11 @@ impl Server {
                 input_schema: Value::Object((*mcp_tool.input_schema).clone()),
             });
         }
-        self.tools = tools;
-        self.mcp_ids = mcp_ids;
-        Ok(())
+        Ok(Self {
+            peer,
+            tools,
+            mcp_ids,
+        })
     }
 }
 
