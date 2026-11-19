@@ -5,11 +5,11 @@
 
 > Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
 
-Ghost Mode is a Rust library implementing Code Mode for agents. Traditional tool calls send all tool call results back to the LLM to request the next set of tool calls. Ghost Mode lets the LLM write a simple python script to combine tool calls -- intermediate results never get get sent back to the LLM. 
+Ghost Mode is a Rust library that brings Code Mode to agents. With normal tool calls, every result goes back to the model before it can ask for the next one. Ghost Mode lets the model write a short Python script that chains the calls itself, so intermediate results never go back to the model.
 
-Think about it like this: Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list. 
+Think about it like this: normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
 
-Say the model needs to know why a pull request's checks failed. Each step needs the one before it. The pull request gives the commit, the commit gives the check runs, and each failed run gives a log. With normal tool calls, that's a round trip to the LLM per step, and every full result goes through the model. With Ghost Mode, the model sends one script:
+Say the model needs to know why a pull request's checks failed. Each step needs the one before it. The pull request gives the commit, the commit gives the check runs, and each failed run gives a log. With normal tool calls, that's a round trip to the model per step, and every full result goes through the model. With Ghost Mode, the model sends one script:
 
 ```python
 pr = get_pull_request(number=42)
@@ -18,17 +18,17 @@ failed = [run for run in runs if run["conclusion"] == "failure"]
 [{"check": run["name"], "log": get_log(run_id=run["id"])[-500:]} for run in failed]
 ```
 
-The script runs entirely in a sandbox on your machine. The model only gets the last 500 characters of each failed log, not the the pull request, every check run, and every full log.
-
+The script runs inside your process. The model only gets the last 500 characters of each failed log, not the pull request, every check run, and every full log.
 
 ## Why Ghost Mode
 
 - **Fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **Lower, more predictable API costs.** Model providers bill by the token, and with normal tool calls every intermediate result is billed as input, then sent again with the rest of the conversation on every later step. With Ghost Mode only the script and its final result reach the model, and the `Limits` you build the `Sandbox` with cap how much any one result can add, 40,000 characters by default.
 - **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the LLM only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
