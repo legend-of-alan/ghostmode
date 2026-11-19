@@ -1,5 +1,5 @@
 //! The feature scenarios: one `World`, run once per executor against `backend::Monty`, and once
-//! more against `backend::Pool` when the `pool` feature is on.
+//! more against `backend::Pool` when the `monty-pool` feature is on.
 
 #[path = "steps/caller.rs"]
 mod caller;
@@ -10,7 +10,7 @@ mod limits;
 mod mcp;
 #[path = "steps/model.rs"]
 mod model;
-#[cfg(feature = "pool")]
+#[cfg(feature = "monty-pool")]
 #[path = "steps/pool.rs"]
 mod pool;
 #[path = "steps/schema.rs"]
@@ -84,7 +84,7 @@ enum Reply {
 enum TestBackend {
     #[default]
     Monty,
-    #[cfg(feature = "pool")]
+    #[cfg(feature = "monty-pool")]
     Pool(ghostmode::backend::Pool),
 }
 
@@ -123,7 +123,7 @@ impl World {
     ) -> Result<Box<dyn AnySandbox>, ghostmode::Error> {
         match &self.backend {
             TestBackend::Monty => build(self.builder(Monty), dump).await,
-            #[cfg(feature = "pool")]
+            #[cfg(feature = "monty-pool")]
             TestBackend::Pool(pool) => build(self.builder(pool.clone()), dump).await,
         }
     }
@@ -213,7 +213,7 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
     let run_rmcp = on_tokio && cfg!(feature = "rmcp");
     let backend_tag = match backend {
         TestBackend::Monty => "monty",
-        #[cfg(feature = "pool")]
+        #[cfg(feature = "monty-pool")]
         TestBackend::Pool(_) => "pool",
     };
     let mut cli = cucumber::cli::Opts::parsed();
@@ -241,7 +241,7 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
 
 /// The path of the `monty` worker binary in the first `PATH` directory that holds one. monty-pool
 /// starts workers with an empty environment, so it needs the full path.
-#[cfg(feature = "pool")]
+#[cfg(feature = "monty-pool")]
 fn find_worker_binary() -> std::path::PathBuf {
     let file_name = format!("monty{}", std::env::consts::EXE_SUFFIX);
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -265,7 +265,7 @@ fn main() {
         .build()
         .expect("multi-thread runtime");
     failed |= runtime.block_on(run_scenarios(true, TestBackend::Monty));
-    #[cfg(feature = "pool")]
+    #[cfg(feature = "monty-pool")]
     {
         println!("executor: Tokio multi-thread runtime, against monty-pool workers");
         failed |= runtime.block_on(async {

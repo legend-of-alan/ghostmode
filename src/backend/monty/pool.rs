@@ -307,7 +307,7 @@ impl Suspension {
 fn to_repl_config(limits: &Limits) -> ReplConfig {
     ReplConfig {
         script_name: SCRIPT_NAME.to_string(),
-        limits: Some(limits.into()),
+        limits: Some(super::resource_limits(limits)),
         os_policy: super::os_policy(),
         ..ReplConfig::default()
     }

@@ -26,7 +26,7 @@ default = ["monty"]
 monty = ["dep:monty", "dep:monty-types"]
 # Runs each session's scripts in a Monty worker process from a monty-pool `Pool`, as
 # `backend::Pool`.
-pool = ["dep:monty-pool", "dep:monty-types"]
+monty-pool = ["dep:monty-pool", "dep:monty-types"]
 # Offers a connected MCP server's tools to scripts as `mcp::Server`.
 rmcp = ["dep:rmcp"]
 

@@ -2,16 +2,21 @@
 //! monty-pool worker processes, with what they share. Only this module and its children name
 //! Monty's types.
 
-#![cfg(any(feature = "monty", feature = "pool"))]
+#![cfg(any(feature = "monty", feature = "monty-pool"))]
 
 use monty_types::{OsPolicy, ResourceLimits, SleepMode};
 
 use crate::sandbox::Limits;
 
-#[cfg(feature = "pool")]
-pub mod pool;
+#[cfg(feature = "monty-pool")]
+pub use self::pool::Pool;
 #[cfg(feature = "monty")]
-pub mod repl;
+pub use self::repl::Monty;
+
+#[cfg(feature = "monty-pool")]
+mod pool;
+#[cfg(feature = "monty")]
+mod repl;
 mod value;
 
 /// The name each session gives its scripts.
@@ -23,15 +28,13 @@ const DUMP_HOLDS_RUN: &str = "the dump holds a run, and ghostmode restores only 
 
 /// Monty's limits that stop a script at `limits`' run time, memory and recursion depth. They
 /// put no bound on suspensions, so only [`Limits::calls_per_execute`] limits tool calls.
-impl From<&Limits> for ResourceLimits {
-    fn from(limits: &Limits) -> Self {
-        Self {
-            max_feed_duration: Some(limits.run_time),
-            max_memory: Some(limits.memory_bytes),
-            max_recursion_depth: limits.recursion_depth,
-            max_suspensions: usize::MAX,
-            ..Self::default()
-        }
+fn resource_limits(limits: &Limits) -> ResourceLimits {
+    ResourceLimits {
+        max_feed_duration: Some(limits.run_time),
+        max_memory: Some(limits.memory_bytes),
+        max_recursion_depth: limits.recursion_depth,
+        max_suspensions: usize::MAX,
+        ..ResourceLimits::default()
     }
 }
 

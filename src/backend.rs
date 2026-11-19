@@ -7,12 +7,12 @@ use serde_json::Value;
 use crate::host;
 use crate::sandbox::Limits;
 
-#[cfg(feature = "pool")]
-pub use self::monty::pool::Pool;
 #[cfg(feature = "monty")]
-pub use self::monty::repl::{DumpError, Monty};
+pub use self::monty::Monty;
+#[cfg(feature = "monty-pool")]
+pub use self::monty::Pool;
 
-pub mod monty;
+mod monty;
 
 /// Runs a sandbox's scripts in Python sessions whose globals persist from one script to the
 /// next. It holds no session: each method takes the idle session, or the script suspended at a

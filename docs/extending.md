@@ -5,7 +5,7 @@ A `Sandbox` works with two parts that you can replace:
 - **The host** decides which tools a script can call, and answers each call. Write one to offer your own tools. It implements the `Host` trait in `src/host.rs`.
 - **The backend** runs the script. Write one to run scripts in another interpreter or another process. It implements the `Backend` trait in `src/backend.rs`.
 
-If you only want to offer tools, you only need a host. The default backend, `Monty`, runs scripts in Monty inside the caller's process. The `pool` feature adds `backend::Pool`, which runs each session in its own Monty worker process.
+If you only want to offer tools, you only need a host. The default backend, `Monty`, runs scripts in Monty inside the caller's process. The `monty-pool` feature adds `backend::Pool`, which runs each session in its own Monty worker process.
 
 This guide uses the same words as the README. The model is the LLM at the model provider. The caller is your app, the agent loop. The `Sandbox` is the library object in the caller's process. The script is the Python the model wrote. Monty is the Python interpreter. The host is your `Host` value, and a tool is one function the host offers.
 
