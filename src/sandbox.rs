@@ -29,7 +29,7 @@ pub struct Sandbox<H, B: Backend> {
     signing_key: Option<[u8; 32]>,
 }
 
-/// Sets up a [`Sandbox`]. Made by [`Builder::new`].
+/// Sets up a [`Sandbox`]. Made by `Sandbox::builder` (with the `monty` feature) or [`Builder::new`].
 pub struct Builder<H, B> {
     host: H,
     backend: B,
