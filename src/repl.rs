@@ -4,9 +4,10 @@ use std::mem;
 
 use monty::{DUMP_VERSION, Dump, ReplProgress, ReplStartError, Session, SessionRef};
 pub(crate) use monty::{DumpError, MontyRepl, ReplFunctionCall};
+pub(crate) use monty_types::CollectedStreams;
 use monty_types::{
     CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult, OsPolicy,
-    PrintWriter, ResourceLimits, ResourceTracker, SleepMode,
+    PrintStream, PrintWriter, ResourceLimits, ResourceTracker, SleepMode,
 };
 use serde_json::Value;
 
@@ -94,25 +95,25 @@ impl Repl {
         });
     }
 
-    /// Feeds `code` to the idle `session` and runs it, adding what it prints to `printed`.
+    /// Feeds `code` to the idle `session` and runs it, adding what it prints to `streams`.
     pub(crate) fn feed_start(
         &self,
         session: Box<MontyRepl>,
         code: &str,
-        printed: &mut String,
+        streams: &mut CollectedStreams,
     ) -> Progress {
         let monty_progress =
-            session.feed_start(code, Vec::new(), PrintWriter::collect_string(printed));
-        self.run(monty_progress, printed)
+            session.feed_start(code, Vec::new(), PrintWriter::collect_streams(streams));
+        self.run(monty_progress, streams)
     }
 
     /// Answers the tool call a script is suspended at, and runs on, adding what it prints to
-    /// `printed`.
+    /// `streams`.
     pub(crate) fn resume(
         &self,
         function_call: Box<ReplFunctionCall>,
         answer: Result<Value, host::Error>,
-        printed: &mut String,
+        streams: &mut CollectedStreams,
     ) -> Progress {
         let answer = match answer {
             Ok(answer) => ExtFunctionResult::Return(value::from_json(&answer)),
@@ -124,21 +125,35 @@ impl Repl {
                 ExtFunctionResult::Error(MontyException::new(ExcType::RuntimeError, Some(message)))
             }
         };
-        let monty_progress = function_call.resume(answer, PrintWriter::collect_string(printed));
-        self.run(monty_progress, printed)
+        let monty_progress = function_call.resume(answer, PrintWriter::collect_streams(streams));
+        self.run(monty_progress, streams)
     }
 
     /// Ends the script suspended at `function_call` with a `RuntimeError` carrying `message`,
-    /// which the script can't catch, adding what it prints to `printed`.
+    /// which the script can't catch, adding what it prints to `streams`.
     pub(crate) fn abort(
         &self,
         function_call: Box<ReplFunctionCall>,
         message: String,
-        printed: &mut String,
+        streams: &mut CollectedStreams,
     ) -> Progress {
         let error = MontyException::new(ExcType::RuntimeError, Some(message));
-        let monty_progress = function_call.abort(error, PrintWriter::collect_string(printed));
-        self.run(monty_progress, printed)
+        let monty_progress = function_call.abort(error, PrintWriter::collect_streams(streams));
+        self.run(monty_progress, streams)
+    }
+
+    /// What a script printed into `streams`, as `(stdout, stderr)`, each in the order it was
+    /// printed.
+    pub(crate) fn split_streams(streams: CollectedStreams) -> (String, String) {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        for (stream, text) in streams.into_entries() {
+            match stream {
+                PrintStream::Stdout => stdout.push_str(&text),
+                PrintStream::Stderr => stderr.push_str(&text),
+            }
+        }
+        (stdout, stderr)
     }
 
     /// Drops the script suspended at `function_call` without running it further, and gives back
@@ -150,11 +165,11 @@ impl Repl {
     /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.
     /// Every other suspension is answered here: an unknown name raises `NameError`, an OS call
     /// gets Monty's no-handler answer, and awaiting a tool raises `RuntimeError`. What the script
-    /// prints is added to `printed`.
+    /// prints is added to `streams`.
     fn run(
         &self,
         mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
-        printed: &mut String,
+        streams: &mut CollectedStreams,
     ) -> Progress {
         loop {
             monty_progress = match monty_progress {
@@ -182,7 +197,7 @@ impl Repl {
                         let error = MontyException::new(ExcType::TypeError, Some(message));
                         function_call.resume(
                             ExtFunctionResult::Error(error),
-                            PrintWriter::collect_string(printed),
+                            PrintWriter::collect_streams(streams),
                         )
                     } else {
                         let args = function_call.args.kwargs().map(|(key, value)| {
@@ -203,19 +218,19 @@ impl Repl {
                 Ok(ReplProgress::FunctionCall(mut function_call)) => {
                     let answer =
                         ExtFunctionResult::NotFound(mem::take(&mut function_call.function_name));
-                    function_call.resume(answer, PrintWriter::collect_string(printed))
+                    function_call.resume(answer, PrintWriter::collect_streams(streams))
                 }
                 Ok(ReplProgress::NameLookup(lookup)) => lookup.resume(
                     NameLookupResult::Undefined,
-                    PrintWriter::collect_string(printed),
+                    PrintWriter::collect_streams(streams),
                 ),
                 Ok(ReplProgress::OsCall(os_call)) => {
                     let answer = os_call.function_call.no_handler_result();
-                    os_call.resume(answer, PrintWriter::collect_string(printed))
+                    os_call.resume(answer, PrintWriter::collect_streams(streams))
                 }
                 Ok(ReplProgress::ResolveFutures(futures)) => {
                     let error = MontyException::runtime_error("tools are not awaitable");
-                    futures.abort(error, PrintWriter::collect_string(printed))
+                    futures.abort(error, PrintWriter::collect_streams(streams))
                 }
             };
         }
