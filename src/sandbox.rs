@@ -512,8 +512,8 @@ impl<H: Host, B: Backend> Builder<H, B> {
     }
 
     /// The secret key that signs dumps. With it, [`Sandbox::dump`] appends an HMAC-SHA256 tag,
-    /// and [`Builder::restore`] checks the tag before the backend reads a byte. The default is unset,
-    /// no signing.
+    /// and [`Builder::restore`] checks the tag before the backend reads a byte. The default is
+    /// unset, no signing.
     ///
     /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
     /// signed restores, including an older one. Use the key only for dumps. The key isn't wiped
@@ -534,9 +534,7 @@ impl<H: Host, B: Backend> Builder<H, B> {
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
     /// them are [`Error::SignatureMismatch`], checked in constant time before the backend reads
-    /// a byte. Without a key, restore trusts the bytes. The backend doesn't authenticate dumps,
-    /// and bytes from anyone else can panic, abort or hang the process, so restore only bytes
-    /// you made.
+    /// a byte. Without a key, restore trusts the bytes, so restore only bytes you made.
     pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, Error> {
         let session_bytes = match self.signing_key {
             Some(key) => {

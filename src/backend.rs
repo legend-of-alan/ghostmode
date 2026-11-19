@@ -18,14 +18,14 @@ pub trait Backend: Sized {
 
     /// An empty idle session that stops a script at `limits`' run time, memory and recursion
     /// depth.
-    fn new_session(&self, limits: &Limits) -> impl Future<Output = Self::Session>;
+    fn new_session(&self, limits: &Limits) -> impl Future<Output = Self::Session> + Send;
 
     /// Feeds `code` to the idle `session` and runs it.
     fn feed_start(
         &self,
         session: Self::Session,
         code: &str,
-    ) -> impl Future<Output = Progress<Self>>;
+    ) -> impl Future<Output = Progress<Self>> + Send;
 
     /// Answers the tool call the script is suspended at with `answer`, and runs on. A
     /// [`host::Error::Refused`] raises `PermissionError` in the script, and a
@@ -34,7 +34,7 @@ pub trait Backend: Sized {
         &self,
         suspension: Self::Suspension,
         answer: Result<Value, host::Error>,
-    ) -> impl Future<Output = Progress<Self>>;
+    ) -> impl Future<Output = Progress<Self>> + Send;
 
     /// Ends the suspended script with a `RuntimeError` carrying `message`, which the script
     /// can't catch.
@@ -42,17 +42,17 @@ pub trait Backend: Sized {
         &self,
         suspension: Self::Suspension,
         message: String,
-    ) -> impl Future<Output = Progress<Self>>;
+    ) -> impl Future<Output = Progress<Self>> + Send;
 
     /// Drops the suspended script without running it further, and gives back its idle session
     /// with the globals the script had set, and what it printed.
     fn abandon(
         &self,
         suspension: Self::Suspension,
-    ) -> impl Future<Output = (Self::Session, Prints)>;
+    ) -> impl Future<Output = (Self::Session, Prints)> + Send;
 
     /// The bytes of the idle `session`, which [`Backend::restore`] reads back.
-    fn dump(&self, session: &mut Self::Session) -> impl Future<Output = Vec<u8>>;
+    fn dump(&self, session: &mut Self::Session) -> impl Future<Output = Vec<u8>> + Send;
 
     /// The idle session that `bytes` from [`Backend::dump`] hold, running under `limits` like a
     /// [new session](Backend::new_session), whatever limits it was dumped with.
@@ -60,7 +60,7 @@ pub trait Backend: Sized {
         &self,
         bytes: &[u8],
         limits: &Limits,
-    ) -> impl Future<Output = Result<Self::Session, Box<dyn error::Error + Send + Sync>>>;
+    ) -> impl Future<Output = Result<Self::Session, Box<dyn error::Error + Send + Sync>>> + Send;
 }
 
 /// How far a script got, from the backend to the sandbox.
