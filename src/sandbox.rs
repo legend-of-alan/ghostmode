@@ -183,8 +183,8 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// running. If a run waited past its idle timeout with no answer from the host, it expires
     /// and `execute` answers its `failed` status without running `code`. With `restart`, an
     /// idle session starts fresh before `code` runs, so the script sees no globals. A session
-    /// lost to a dropped `execute`, `poll` or `cancel` future also starts fresh, and the status
-    /// says `restarted`.
+    /// lost to a dropped `execute`, `poll` or `cancel` future also starts fresh, and the next
+    /// finished or failed status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         let span = tracing::info_span!(
             "execute",
