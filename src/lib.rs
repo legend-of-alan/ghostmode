@@ -9,4 +9,4 @@ mod sandbox;
 pub mod schema;
 mod value;
 
-pub use sandbox::{Builder, Limits, Sandbox, Status};
+pub use sandbox::{Builder, Error, Limits, Sandbox, Status};
