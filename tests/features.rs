@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
-use ghostmode::{Limits, Sandbox, Status};
+use ghostmode::{Builder, Limits, Sandbox, Status};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
 use tracing::instrument::WithSubscriber;
@@ -35,6 +35,8 @@ struct World {
     sandbox: Option<Sandbox<test_host::TestHost>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
+    dump: Option<Vec<u8>>,
+    caller_error: Option<ghostmode::Error>,
     elapsed: Duration,
     dispatch: Dispatch,
     span_capture: spans::SpanCapture,
@@ -48,38 +50,48 @@ impl fmt::Debug for World {
     }
 }
 
-/// One of the model's two tool calls or the caller's cancel, from a When step to the sandbox.
+/// One of the model's two tool calls or a call of the caller's, from a When step to the sandbox.
 enum Request {
     Execute { code: String, restart: bool },
     Poll(u64),
     Cancel(u64),
+    Reset,
+    Dump,
 }
 
 /// What the sandbox answers a [`Request`], from the sandbox to a When step.
 enum Reply {
     Status(Status),
     Cancel(bool),
+    Reset,
+    Dump(Result<Vec<u8>, ghostmode::Error>),
 }
 
 impl World {
-    /// Sends `request` to the scenario's sandbox, building it on first use, and keeps the status
-    /// JSON or what cancel returned, and how long the request waited for it. On a Tokio
-    /// multi-thread runtime the call runs in `tokio::spawn`, so a sandbox future that is not
-    /// `Send` fails the build.
+    /// A builder for the scenario's sandbox, with the host, waits and limits its Given steps set.
+    fn builder(&self) -> Builder<test_host::TestHost> {
+        let mut builder = Sandbox::builder(self.host.clone());
+        if let Some(wait) = self.execute_wait {
+            builder = builder.execute_wait(wait);
+        }
+        if let Some(wait) = self.poll_wait {
+            builder = builder.poll_wait(wait);
+        }
+        if let Some(limits) = self.limits {
+            builder = builder.limits(limits);
+        }
+        builder
+    }
+
+    /// Sends `request` to the scenario's sandbox, building it on first use, and keeps what it
+    /// answers: the status JSON, what cancel returned, or the dump or the caller's error. It also
+    /// keeps how long the request waited. On a Tokio multi-thread runtime the call runs in
+    /// `tokio::spawn`, so a sandbox future that is not `Send` fails the build.
     async fn send(&mut self, request: Request) {
-        let mut sandbox = self.sandbox.take().unwrap_or_else(|| {
-            let mut builder = Sandbox::builder(self.host.clone());
-            if let Some(wait) = self.execute_wait {
-                builder = builder.execute_wait(wait);
-            }
-            if let Some(wait) = self.poll_wait {
-                builder = builder.poll_wait(wait);
-            }
-            if let Some(limits) = self.limits {
-                builder = builder.limits(limits);
-            }
-            builder.build()
-        });
+        let mut sandbox = self
+            .sandbox
+            .take()
+            .unwrap_or_else(|| self.builder().build());
         let answer = async move {
             let reply = match request {
                 Request::Execute { code, restart } => {
@@ -87,6 +99,11 @@ impl World {
                 }
                 Request::Poll(run_id) => Reply::Status(sandbox.poll(run_id).await),
                 Request::Cancel(run_id) => Reply::Cancel(sandbox.cancel(run_id)),
+                Request::Reset => {
+                    sandbox.reset();
+                    Reply::Reset
+                }
+                Request::Dump => Reply::Dump(sandbox.dump()),
             };
             (sandbox, reply)
         }
@@ -106,6 +123,18 @@ impl World {
                 self.status = serde_json::to_value(status).expect("status serializes");
             }
             Reply::Cancel(was_open) => self.cancel_returned = Some(was_open),
+            Reply::Reset => {}
+            Reply::Dump(Ok(bytes)) => self.dump = Some(bytes),
+            Reply::Dump(Err(error)) => self.caller_error = Some(error),
+        }
+    }
+
+    /// Replaces the scenario's sandbox with a new one restored from `bytes`, or keeps the
+    /// caller's error if restoring fails.
+    fn restore(&mut self, bytes: &[u8]) {
+        match self.builder().restore(bytes) {
+            Ok(sandbox) => self.sandbox = Some(sandbox),
+            Err(error) => self.caller_error = Some(error),
         }
     }
 }
