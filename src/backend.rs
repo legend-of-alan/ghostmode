@@ -10,7 +10,7 @@ use crate::sandbox::Limits;
 #[cfg(feature = "monty")]
 pub use self::monty::{DumpError, Monty};
 
-mod monty;
+pub mod monty;
 
 /// Runs a sandbox's scripts in Python sessions whose globals persist from one script to the
 /// next. It holds no session: each method takes the idle session, or the script suspended at a
