@@ -1,6 +1,9 @@
-![ghostmode: Code Mode for Rust agents.](assets/ghostmode-logo.png)
+<p align="center"><img src="assets/ghostmode-logo.png" alt="ghostmode: Code Mode for Rust agents."></p>
+<p align="center"><a href="https://github.com/legend-of-alan/ghostmode/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/legend-of-alan/ghostmode/ci.yml?branch=main&label=CI" alt="CI"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a> <a href="https://github.com/sponsors/legend-of-alan"><img src="https://img.shields.io/badge/sponsor-%E2%99%A5-db61a2?logo=githubsponsors" alt="Sponsor"></a></p>
 
 # ghostmode
+
+> Early days. The first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
 
 Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and the host provides the tools the script calls. Only the result comes back to the model. The core is async without tying you to a runtime.
 
@@ -49,6 +52,64 @@ A tool is one function the host offers. The script calls it as a Python function
 
 Every arrow inside the caller's process is a plain Rust function call. The only network hops are caller to model provider, and host to MCP server when the host is `mcp::Server`.
 
-Early days: the design is underway and the first real release is coming. The `0.0.1` crate on crates.io only reserves the name.
+## Usage
 
-Licensed under MIT.
+The caller writes a host that offers tools, builds a `Sandbox`, and hands the model two tool definitions, `execute` and `poll`. When the model calls `execute`, the caller passes the code to `Sandbox::execute` and sends the `Status` JSON back. If that status is running, the model calls `poll` with the `run_id`, and the caller does the same with `Sandbox::poll`.
+
+```rust
+use futures_util::future::{BoxFuture, FutureExt};
+use ghostmode::host::{Call, Error, Host, Tool};
+use ghostmode::{schema, Sandbox};
+use serde_json::{json, Value};
+
+struct Echo;
+
+impl Host for Echo {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
+            id: "echo".into(),
+            description: "Returns the text you pass it.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"],
+            }),
+        }]
+    }
+
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>> {
+        let text = call.args["text"].clone();
+        async move { Ok(text) }.boxed()
+    }
+}
+
+let host = Echo;
+let tools = schema::list_mcp_tools(&host.tools());
+let mut sandbox = Sandbox::builder(host).build();
+// Hand `tools` to the model. When it calls execute, run the code and send the Status JSON back.
+let status = sandbox.execute("echo(text='hello')").await;
+let reply = serde_json::to_value(&status).unwrap();
+```
+
+`schema::list_mcp_tools` is the MCP shape. `schema::list_openai_functions` is the same pair as OpenAI functions. With the `rmcp` feature, you can pass an `mcp::Server` to `Sandbox::builder` instead of writing a host, and the script calls that server's tools.
+
+## Build from source
+
+You need [rustup](https://rustup.rs). It installs the Rust version pinned in `rust-toolchain.toml`.
+
+```sh
+git clone https://github.com/legend-of-alan/ghostmode.git
+cd ghostmode
+cargo build --locked
+cargo test --locked
+```
+
+`cargo test --locked --all-features` also builds the `rmcp` feature, which offers `mcp::Server`. Fmt, clippy and the rest of CI are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributing
+
+Contributions are issues only for now. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Licensed under [MIT](LICENSE).
