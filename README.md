@@ -20,16 +20,18 @@ The script runs in your process. Each `list_issues` call goes to your code, and 
 
 ## Why Code Mode
 
-With normal tool calls, every result goes through the model. The model calls a tool, reads the whole result, and then picks the next call. Each step costs tokens and a round trip to the model provider. A script does the loops, filtering and error handling itself, so the model reads one result at the end.
+Normal tool calling is like going back to the store 30 times to get 30 items. Code Mode is one trip with a shopping list.
 
-Other teams have measured what this saves:
+With normal tool calls, the model calls one tool, reads the whole result, then calls the next. Every result goes through the model, and each one costs tokens and a round trip. In Ghost Mode the model writes a short Python script instead. The script calls your tools, loops, filters and handles errors on its own, and only its result goes back to the model.
 
-- **Fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000, which is 98.7% less. The agent wrote code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, more than 2,500 endpoints, into about 1,000 tokens. Plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
-- **Fewer steps and better results.** Models have read far more code than tool-call JSON. Across 17 models, the CodeAct paper found that code actions took up to 30% fewer actions than JSON or text tool calls, and succeeded up to 20 points more often ([paper](https://arxiv.org/abs/2402.01030)).
+That adds up fast:
 
-Cloudflare calls this approach Code Mode. Ghost Mode brings it to Rust.
+- **Way fewer tokens.** Anthropic cut one workflow from 150,000 tokens to 2,000 (98.7% less) by having the agent write code against its tools instead of loading every tool definition up front ([post](https://www.anthropic.com/engineering/code-execution-with-mcp)). Cloudflare fits its whole API, 2,500+ endpoints, into about 1,000 tokens, where plain MCP tools would take 1.17 million ([post](https://blog.cloudflare.com/code-mode-mcp/)).
+- **Fewer steps, better results.** Models have read way more code than tool-call JSON. Across 17 models, CodeAct's code actions needed up to 30% fewer actions and scored up to 20 points higher success than JSON or text tool calls ([paper](https://arxiv.org/abs/2402.01030)).
 
-To use it, give a `Sandbox` your tools, or point it at an MCP server. Then give the model two tool definitions, `execute` and `poll`. Monty, a Python interpreter, runs the script inside your process, so you don't need a container or a separate service. The script can reach the outside world only through your tools. The core is async, and you pick the runtime: Tokio, smol or a blocking executor.
+Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
+
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model two tool definitions, `execute` and `poll`. Monty runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
