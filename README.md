@@ -1,3 +1,5 @@
+![ghostmode: Code Mode for Rust agents.](assets/ghostmode-logo.png)
+
 # ghostmode
 
 Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and the host provides the tools the script calls. Only the result comes back to the model. The core is async without tying you to a runtime.
