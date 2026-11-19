@@ -4,7 +4,7 @@ flowchart LR
     end
     subgraph App["Caller's process"]
         Caller["Caller: agent loop"]
-        subgraph GM["ghostmode Sandbox"]
+        subgraph GM["Ghost Mode Sandbox"]
             Monty["Monty, runs the script"]
         end
         Host["Host: your type, or mcp::Server"]
