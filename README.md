@@ -4,6 +4,22 @@
 
 Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and the host provides the tools the script calls. Only the result comes back to the model. The core is async without tying you to a runtime.
 
+## Why Code Mode
+
+Agents usually call tools one at a time. Every result goes back through the model, even when the model only needs to hand it to the next tool. That costs tokens and time, and big results can blow past the context window.
+
+With Code Mode the model writes a short script instead. The script calls the tools, loops, filters and handles errors on its own, and the model only reads what the script returns.
+
+- **Fewer tokens.** Big intermediate results stay in the script and never hit the model's context.
+- **Fewer round trips.** One `execute` can make many tool calls.
+- **Better tool use.** Models have seen way more code than tool-call JSON, so they chain tools better in code.
+
+The evidence:
+
+- [Executable Code Actions Elicit Better LLM Agents](https://arxiv.org/abs/2402.01030) (CodeAct) tested 17 models and found code actions beat JSON and text tool calls, with up to 20% higher success.
+- [Cloudflare's Code Mode post](https://blog.cloudflare.com/code-mode/) found agents handle more tools, and more complex ones, when the tools look like an API to write code against.
+- [Anthropic's code execution with MCP post](https://www.anthropic.com/engineering/code-execution-with-mcp) walks through how tool definitions and intermediate results fill the context, and how running code fixes both.
+
 ## How it works
 
 ```mermaid
