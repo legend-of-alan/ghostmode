@@ -12,15 +12,15 @@ use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
+use crate::backend::{Backend, Prints, Progress};
 use crate::host::{self, Host};
-use crate::repl::{CollectedStreams, DumpError, MontyRepl, Progress, Repl, ReplFunctionCall};
 
-/// One Python session that runs the model's scripts, and the host whose tools they call.
-/// Globals persist from one `execute` to the next, and one run is in flight at a time.
-pub struct Sandbox<H> {
+/// One Python session that runs the model's scripts in backend `B`, and the host whose tools
+/// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
+pub struct Sandbox<H, B: Backend> {
     host: H,
-    repl: Repl,
-    state: Option<State>,
+    backend: B,
+    state: Option<State<B>>,
     last_run_id: u64,
     unreported_restart: bool,
     execute_wait: Duration,
@@ -29,9 +29,10 @@ pub struct Sandbox<H> {
     signing_key: Option<[u8; 32]>,
 }
 
-/// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`].
-pub struct Builder<H> {
+/// Sets up a [`Sandbox`]. Made by [`Sandbox::builder`] or [`Builder::new`].
+pub struct Builder<H, B> {
     host: H,
+    backend: B,
     execute_wait: Duration,
     poll_wait: Duration,
     limits: Limits,
@@ -120,33 +121,32 @@ pub enum Status {
 }
 
 /// Why the caller's [`Sandbox::dump`] or [`Builder::restore`] failed.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Error {
     /// The session is held by the run with this id, which `execute` left running.
     RunOpen {
         /// The open run's id.
         run_id: u64,
     },
-    /// Monty can't load these bytes as a session.
-    Restore(DumpError),
+    /// The backend can't load these bytes as a session, for this reason.
+    Restore(Box<dyn error::Error + Send + Sync>),
     /// The bytes don't end in the tag that the builder's signing key makes for them: the key
     /// didn't sign them, or they changed since.
     SignatureMismatch,
 }
 
 /// Where the sandbox's session is: idle between scripts, or held by a suspended run.
-enum State {
-    Idle(Box<MontyRepl>),
-    Suspended(Run),
+enum State<B: Backend> {
+    Idle(B::Session),
+    Suspended(Run<B>),
 }
 
 /// A script suspended at a tool call the host has not answered yet.
-struct Run {
+struct Run<B: Backend> {
     id: u64,
     answered_calls: Vec<host::Call>,
-    streams: CollectedStreams,
     call: host::Call,
-    function_call: Box<ReplFunctionCall>,
+    suspension: B::Suspension,
     /// The host's answer to `call`, or `None` once the call timeout passes first.
     answer: BoxFuture<'static, Option<Result<Value, host::Error>>>,
     idle_since: Instant,
@@ -166,18 +166,7 @@ impl Default for Limits {
     }
 }
 
-impl<H: Host> Sandbox<H> {
-    /// A builder for a sandbox whose scripts call `host`'s tools.
-    pub fn builder(host: H) -> Builder<H> {
-        Builder {
-            host,
-            execute_wait: Duration::from_secs(30),
-            poll_wait: Duration::from_secs(10),
-            limits: Limits::default(),
-            signing_key: None,
-        }
-    }
-
+impl<H: Host, B: Backend> Sandbox<H, B> {
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
     /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
     /// script that fails is a `failed` status, as is a request while another run is still
@@ -194,11 +183,11 @@ impl<H: Host> Sandbox<H> {
         );
         let started = Instant::now();
         let status = async {
-            if let Some(status) = self.expire_idle_run() {
+            if let Some(status) = self.expire_idle_run().await {
                 return status;
             }
             if restart && matches!(self.state, Some(State::Idle(_))) {
-                self.reset();
+                self.reset().await;
             }
             let session = match self.state.take() {
                 Some(State::Idle(session)) => session,
@@ -218,9 +207,8 @@ impl<H: Host> Sandbox<H> {
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            let mut streams = CollectedStreams::default();
-            let progress = self.repl.feed_start(session, code, &mut streams);
-            if let Some(status) = self.suspend_or_end(id, Vec::new(), streams, progress) {
+            let progress = self.backend.feed_start(session, code).await;
+            if let Some(status) = self.suspend_or_end(id, Vec::new(), progress).await {
                 return status;
             }
             self.wait_timeout(self.execute_wait).await
@@ -252,7 +240,7 @@ impl<H: Host> Sandbox<H> {
                     restarted: false,
                 };
             }
-            match self.expire_idle_run() {
+            match self.expire_idle_run().await {
                 Some(status) => status,
                 None => self.wait_timeout(self.poll_wait).await,
             }
@@ -267,29 +255,30 @@ impl<H: Host> Sandbox<H> {
     /// open. The session is idle again with the globals the script had set, and the host's
     /// answer to the call the script waits on is dropped. Cancelling any other run changes
     /// nothing.
-    pub fn cancel(&mut self, run_id: u64) -> bool {
+    pub async fn cancel(&mut self, run_id: u64) -> bool {
         let Some(run) = self.take_run_if(|run| run.id == run_id) else {
             return false;
         };
-        self.state = Some(State::Idle(Repl::abandon(run.function_call)));
+        let (session, _) = self.backend.abandon(run.suspension).await;
+        self.state = Some(State::Idle(session));
         true
     }
 
     /// Replaces the session with an empty one, and marks the next finished or failed status
     /// `restarted`. An open run is dropped with the host's answer to its call, so polling it
     /// answers `failed`.
-    pub fn reset(&mut self) {
-        self.state = Some(State::Idle(Repl::new_session(&self.limits)));
+    pub async fn reset(&mut self) {
+        self.state = Some(State::Idle(self.backend.new_session(&self.limits).await));
         self.unreported_restart = true;
     }
 
     /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
     /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
     /// [`Error::RunOpen`].
-    pub fn dump(&self) -> Result<Vec<u8>, Error> {
-        match &self.state {
+    pub async fn dump(&mut self) -> Result<Vec<u8>, Error> {
+        match &mut self.state {
             Some(State::Idle(session)) => {
-                let mut bytes = Repl::dump_session(session);
+                let mut bytes = self.backend.dump(session).await;
                 if let Some(key) = self.signing_key {
                     let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
                     bytes.extend_from_slice(&tag);
@@ -303,7 +292,7 @@ impl<H: Host> Sandbox<H> {
     }
 
     /// Takes the suspended run out of the sandbox if `condition` holds for it.
-    fn take_run_if(&mut self, condition: impl FnOnce(&Run) -> bool) -> Option<Run> {
+    fn take_run_if(&mut self, condition: impl FnOnce(&Run<B>) -> bool) -> Option<Run<B>> {
         match self.state.take() {
             Some(State::Suspended(run)) if condition(&run) => Some(run),
             state => {
@@ -336,23 +325,22 @@ impl<H: Host> Sandbox<H> {
             let Run {
                 id,
                 mut answered_calls,
-                mut streams,
                 call,
-                function_call,
+                suspension,
                 ..
             } = run;
             let progress = match answer {
                 Some(answer) => {
                     answered_calls.push(self.cut_args(call));
                     Span::current().record("call_count", answered_calls.len());
-                    self.repl.resume(function_call, answer, &mut streams)
+                    self.backend.resume(suspension, answer).await
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    self.repl.abort(function_call, message, &mut streams)
+                    self.backend.abort(suspension, message).await
                 }
             };
-            if let Some(status) = self.suspend_or_end(id, answered_calls, streams, progress) {
+            if let Some(status) = self.suspend_or_end(id, answered_calls, progress).await {
                 return status;
             }
         }
@@ -360,50 +348,47 @@ impl<H: Host> Sandbox<H> {
 
     /// Suspends run `id` at the tool call `progress` reached, or ends it with its status. A call
     /// past the call limit ends the run instead of reaching the host.
-    fn suspend_or_end(
+    async fn suspend_or_end(
         &mut self,
         id: u64,
         answered_calls: Vec<host::Call>,
-        mut streams: CollectedStreams,
-        mut progress: Progress,
+        mut progress: Progress<B>,
     ) -> Option<Status> {
         let call_limit = self.limits.calls_per_execute;
         if answered_calls.len() >= call_limit
-            && let Progress::Call { function_call, .. } = progress
+            && let Progress::Call { suspension, .. } = progress
         {
             let message = format!("the script reached the call limit of {call_limit}");
-            progress = self.repl.abort(function_call, message, &mut streams);
+            progress = self.backend.abort(suspension, message).await;
         }
         match progress {
-            Progress::Call {
-                call,
-                function_call,
-            } => {
+            Progress::Call { call, suspension } => {
                 let answer = self.call_host(id, &call);
                 self.state = Some(State::Suspended(Run {
                     id,
                     answered_calls,
-                    streams,
                     call,
-                    function_call,
+                    suspension,
                     answer,
                     idle_since: Instant::now(),
                 }));
                 None
             }
-            Progress::Ended { result, session } => {
-                Some(self.end_run(session, result, answered_calls, streams))
-            }
+            Progress::Ended {
+                result,
+                prints,
+                session,
+            } => Some(self.end_run(session, result, answered_calls, prints)),
         }
     }
 
     /// Ends the suspended run if it has waited past the idle timeout, and says it expired.
-    fn expire_idle_run(&mut self) -> Option<Status> {
+    async fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.limits.idle_timeout?;
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
-        let session = Repl::abandon(run.function_call);
+        let (session, prints) = self.backend.abandon(run.suspension).await;
         let error = format!("run {} expired", run.id);
-        Some(self.end_run(session, Err(error), run.answered_calls, run.streams))
+        Some(self.end_run(session, Err(error), run.answered_calls, prints))
     }
 
     /// Ends the run: `session` is idle again, and the script's result and what it printed to
@@ -413,17 +398,17 @@ impl<H: Host> Sandbox<H> {
     /// that was.
     fn end_run(
         &mut self,
-        session: Box<MontyRepl>,
+        session: B::Session,
         result: Result<Value, String>,
         answered_calls: Vec<host::Call>,
-        streams: CollectedStreams,
+        prints: Prints,
     ) -> Status {
         self.state = Some(State::Idle(session));
         let result_chars = match &result {
             Ok(value) => count_chars(value),
             Err(error) => error.chars().count(),
         };
-        let (stdout, stderr) = Repl::split_streams(streams);
+        let Prints { stdout, stderr } = prints;
         let (stdout_chars, stderr_chars) = (stdout.chars().count(), stderr.chars().count());
         let (result_share, prints_share) = split_budget(
             self.limits.output_chars,
@@ -494,7 +479,19 @@ impl<H: Host> Sandbox<H> {
     }
 }
 
-impl<H: Host> Builder<H> {
+impl<H: Host, B: Backend> Builder<H, B> {
+    /// A builder for a sandbox whose scripts call `host`'s tools and run in `backend`.
+    pub fn new(host: H, backend: B) -> Self {
+        Self {
+            host,
+            backend,
+            execute_wait: Duration::from_secs(30),
+            poll_wait: Duration::from_secs(10),
+            limits: Limits::default(),
+            signing_key: None,
+        }
+    }
+
     /// How long `execute` waits for a script before it answers `running`. The default is 30 s.
     pub fn execute_wait(mut self, wait: Duration) -> Self {
         self.execute_wait = wait;
@@ -515,7 +512,7 @@ impl<H: Host> Builder<H> {
     }
 
     /// The secret key that signs dumps. With it, [`Sandbox::dump`] appends an HMAC-SHA256 tag,
-    /// and [`Builder::restore`] checks the tag before Monty reads a byte. The default is unset,
+    /// and [`Builder::restore`] checks the tag before the backend reads a byte. The default is unset,
     /// no signing.
     ///
     /// The tag proves the key signed the bytes. It doesn't hide them, and any dump the key
@@ -527,20 +524,20 @@ impl<H: Host> Builder<H> {
     }
 
     /// The sandbox, with an empty Python session.
-    pub fn build(self) -> Sandbox<H> {
-        let session = Repl::new_session(&self.limits);
+    pub async fn build(self) -> Sandbox<H, B> {
+        let session = self.backend.new_session(&self.limits).await;
         self.build_with_session(session)
     }
 
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
-    /// this builder's limits. Bytes Monty can't load are [`Error::Restore`].
+    /// this builder's limits. Bytes the backend can't load are [`Error::Restore`].
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
-    /// them are [`Error::SignatureMismatch`], checked in constant time before Monty reads a
-    /// byte. Without a key, restore trusts the bytes. Monty doesn't authenticate dumps, and
-    /// bytes from anyone else can panic, abort or hang the process, so restore only bytes you
-    /// made.
-    pub fn restore(self, bytes: &[u8]) -> Result<Sandbox<H>, Error> {
+    /// them are [`Error::SignatureMismatch`], checked in constant time before the backend reads
+    /// a byte. Without a key, restore trusts the bytes. The backend doesn't authenticate dumps,
+    /// and bytes from anyone else can panic, abort or hang the process, so restore only bytes
+    /// you made.
+    pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, Error> {
         let session_bytes = match self.signing_key {
             Some(key) => {
                 let (session_bytes, tag) = bytes
@@ -553,16 +550,19 @@ impl<H: Host> Builder<H> {
             }
             None => bytes,
         };
-        let session = Repl::load_session(session_bytes, &self.limits).map_err(Error::Restore)?;
+        let session = self
+            .backend
+            .restore(session_bytes, &self.limits)
+            .await
+            .map_err(Error::Restore)?;
         Ok(self.build_with_session(session))
     }
 
     /// The sandbox, with `session` as its idle Python session.
-    fn build_with_session(self, session: Box<MontyRepl>) -> Sandbox<H> {
-        let tool_ids = self.host.tools().into_iter().map(|tool| tool.id).collect();
+    fn build_with_session(self, session: B::Session) -> Sandbox<H, B> {
         Sandbox {
             host: self.host,
-            repl: Repl::new(tool_ids),
+            backend: self.backend,
             state: Some(State::Idle(session)),
             last_run_id: 0,
             unreported_restart: false,
@@ -588,7 +588,7 @@ impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::RunOpen { .. } | Self::SignatureMismatch => None,
-            Self::Restore(error) => Some(error),
+            Self::Restore(error) => Some(error.as_ref()),
         }
     }
 }

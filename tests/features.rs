@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
+use ghostmode::repl::Repl;
 use ghostmode::{Builder, Limits, Sandbox, Status};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
@@ -33,7 +34,7 @@ struct World {
     poll_wait: Option<Duration>,
     limits: Option<Limits>,
     signing_key: Option<[u8; 32]>,
-    sandbox: Option<Sandbox<test_host::TestHost>>,
+    sandbox: Option<Sandbox<test_host::TestHost, Repl>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,
@@ -74,7 +75,7 @@ enum Reply {
 impl World {
     /// A builder for the scenario's sandbox, with the host, waits, limits and signing key its
     /// steps set.
-    fn builder(&self) -> Builder<test_host::TestHost> {
+    fn builder(&self) -> Builder<test_host::TestHost, Repl> {
         let mut builder = Sandbox::builder(self.host.clone());
         if let Some(wait) = self.execute_wait {
             builder = builder.execute_wait(wait);
@@ -96,22 +97,22 @@ impl World {
     /// keeps how long the request waited. On a Tokio multi-thread runtime the call runs in
     /// `tokio::spawn`, so a sandbox future that is not `Send` fails the build.
     async fn send(&mut self, request: Request) {
-        let mut sandbox = self
-            .sandbox
-            .take()
-            .unwrap_or_else(|| self.builder().build());
+        let mut sandbox = match self.sandbox.take() {
+            Some(sandbox) => sandbox,
+            None => self.builder().build().await,
+        };
         let answer = async move {
             let reply = match request {
                 Request::Execute { code, restart } => {
                     Reply::Status(sandbox.execute(&code, restart).await)
                 }
                 Request::Poll(run_id) => Reply::Status(sandbox.poll(run_id).await),
-                Request::Cancel(run_id) => Reply::Cancel(sandbox.cancel(run_id)),
+                Request::Cancel(run_id) => Reply::Cancel(sandbox.cancel(run_id).await),
                 Request::Reset => {
-                    sandbox.reset();
+                    sandbox.reset().await;
                     Reply::Reset
                 }
-                Request::Dump => Reply::Dump(sandbox.dump()),
+                Request::Dump => Reply::Dump(sandbox.dump().await),
             };
             (sandbox, reply)
         }
@@ -139,8 +140,8 @@ impl World {
 
     /// Replaces the scenario's sandbox with a new one restored from `bytes`, or keeps the
     /// caller's error if restoring fails.
-    fn restore(&mut self, bytes: &[u8]) {
-        match self.builder().restore(bytes) {
+    async fn restore(&mut self, bytes: &[u8]) {
+        match self.builder().restore(bytes).await {
             Ok(sandbox) => self.sandbox = Some(sandbox),
             Err(error) => self.caller_error = Some(error),
         }

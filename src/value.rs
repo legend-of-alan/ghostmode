@@ -3,6 +3,8 @@
 //! Containers become arrays or objects, an `int` too big for 64 bits becomes its digit string,
 //! and any other value, such as a float JSON can't hold, becomes its `repr`.
 
+#![cfg(feature = "monty")]
+
 use monty_types::unstable::{self, MontyNode};
 use monty_types::{MontyObject, ObjectRef};
 use serde_json::{Map, Number, Value};
