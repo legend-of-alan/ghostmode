@@ -2,8 +2,8 @@
 
 use std::mem;
 
-pub(crate) use monty::{MontyRepl, ReplFunctionCall};
-use monty::{ReplProgress, ReplStartError};
+use monty::{DUMP_VERSION, Dump, ReplProgress, ReplStartError, Session, SessionRef};
+pub(crate) use monty::{DumpError, MontyRepl, ReplFunctionCall};
 use monty_types::{
     CompileOptions, ExcType, ExtFunctionResult, MontyException, NameLookupResult, OsPolicy,
     PrintWriter, ResourceLimits, ResourceTracker, SleepMode,
@@ -12,6 +12,9 @@ use serde_json::Value;
 
 use crate::sandbox::Limits;
 use crate::{host, value};
+
+/// The file name a script's traceback names.
+const SCRIPT_NAME: &str = "script.py";
 
 /// Runs scripts in a Monty session whose globals persist from one script to the next. It holds
 /// no session: each call takes the idle session, or the call a script is suspended at, by value,
@@ -40,23 +43,55 @@ impl Repl {
         Self { tool_ids }
     }
 
-    /// An empty idle session that stops a script at `limits`' run time, memory and recursion
-    /// depth. Every OS call gets Monty's no-handler answer, and `time.sleep` returns at
-    /// once.
+    /// An empty idle session that runs under [`Repl::set_limits_and_os_policy`].
     pub(crate) fn new_session(limits: &Limits) -> Box<MontyRepl> {
-        let os_policy = OsPolicy {
-            sleep: SleepMode::Zero,
-            ..OsPolicy::default()
+        let tracker = ResourceTracker::default();
+        let mut session = Box::new(MontyRepl::new(
+            SCRIPT_NAME,
+            tracker,
+            CompileOptions::default(),
+        ));
+        Self::set_limits_and_os_policy(&mut session, limits);
+        session
+    }
+
+    /// The bytes of the idle `session`, in Monty's dump format, which [`Repl::load_session`]
+    /// reads back.
+    pub(crate) fn dump_session(session: &MontyRepl) -> Vec<u8> {
+        monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session))
+            .expect("Monty serializes every idle session")
+    }
+
+    /// The idle session that `bytes` from [`Repl::dump_session`] hold, running under
+    /// [`Repl::set_limits_and_os_policy`] whatever limits it was dumped with. A dump of a
+    /// suspended or one-shot run is [`DumpError::Unsupported`], whose `found` is this build's
+    /// dump version.
+    pub(crate) fn load_session(bytes: &[u8], limits: &Limits) -> Result<Box<MontyRepl>, DumpError> {
+        let Session::Idle(mut session) = Dump::load(bytes)?.state else {
+            return Err(DumpError::Unsupported {
+                found: DUMP_VERSION,
+                reason: "the dump holds a run, and ghostmode restores only an idle session"
+                    .to_string(),
+            });
         };
+        Self::set_limits_and_os_policy(&mut session, limits);
+        Ok(session)
+    }
+
+    /// Makes `session` stop a script at `limits`' run time, memory and recursion depth, give
+    /// every OS call Monty's no-handler answer, and return from `time.sleep` at once.
+    fn set_limits_and_os_policy(session: &mut MontyRepl, limits: &Limits) {
         let resource_limits = ResourceLimits {
             max_feed_duration: Some(limits.run_time),
             max_memory: Some(limits.memory_bytes),
             max_recursion_depth: limits.recursion_depth,
             ..ResourceLimits::default()
         };
-        let tracker = ResourceTracker::new(resource_limits);
-        let session = MontyRepl::new("script.py", tracker, CompileOptions::default());
-        Box::new(session.with_os_policy(os_policy))
+        *session.tracker_mut() = ResourceTracker::new(resource_limits);
+        session.set_os_policy(OsPolicy {
+            sleep: SleepMode::Zero,
+            ..OsPolicy::default()
+        });
     }
 
     /// Feeds `code` to the idle `session` and runs it, adding what it prints to `printed`.

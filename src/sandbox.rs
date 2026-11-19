@@ -1,7 +1,7 @@
 //! The sandbox that answers the model's `execute` and `poll` tool calls.
 
-use std::mem;
 use std::time::{Duration, Instant};
+use std::{error, fmt, mem};
 
 use futures_timer::Delay;
 use futures_util::future::{self, BoxFuture, Either, FutureExt};
@@ -11,7 +11,7 @@ use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::host::{self, Host};
-use crate::repl::{MontyRepl, Progress, Repl, ReplFunctionCall};
+use crate::repl::{DumpError, MontyRepl, Progress, Repl, ReplFunctionCall};
 
 /// One Python session that runs the model's scripts, and the host whose tools they call.
 /// Globals persist from one `execute` to the next, and one run is in flight at a time.
@@ -104,6 +104,18 @@ pub enum Status {
     },
 }
 
+/// Why the caller's [`Sandbox::dump`] or [`Builder::restore`] failed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    /// The session is held by the run with this id, which `execute` left running.
+    RunOpen {
+        /// The open run's id.
+        run_id: u64,
+    },
+    /// Monty can't load these bytes as a session.
+    Restore(DumpError),
+}
+
 /// Where the sandbox's session is: idle between scripts, or held by a suspended run.
 enum State {
     Idle(Box<MontyRepl>),
@@ -167,13 +179,14 @@ impl<H: Host> Sandbox<H> {
                 return status;
             }
             if restart && matches!(self.state, Some(State::Idle(_))) {
-                self.start_fresh();
+                self.reset();
             }
             let session = match self.state.take() {
                 Some(State::Idle(session)) => session,
                 suspended => {
                     self.state = suspended;
-                    let error = format!("run {} is still running", self.last_run_id);
+                    let run_id = self.last_run_id;
+                    let error = Error::RunOpen { run_id }.to_string();
                     return Status::Failed {
                         error,
                         calls: Vec::new(),
@@ -242,10 +255,22 @@ impl<H: Host> Sandbox<H> {
     }
 
     /// Replaces the session with an empty one, and marks the next finished or failed status
-    /// `restarted`.
-    fn start_fresh(&mut self) {
+    /// `restarted`. An open run is dropped with the host's answer to its call, so polling it
+    /// answers `failed`.
+    pub fn reset(&mut self) {
         self.state = Some(State::Idle(Repl::new_session(&self.limits)));
         self.unreported_restart = true;
+    }
+
+    /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox.
+    /// While a run is open this is [`Error::RunOpen`].
+    pub fn dump(&self) -> Result<Vec<u8>, Error> {
+        match &self.state {
+            Some(State::Idle(session)) => Ok(Repl::dump_session(session)),
+            _ => Err(Error::RunOpen {
+                run_id: self.last_run_id,
+            }),
+        }
     }
 
     /// Takes the suspended run out of the sandbox if `condition` holds for it.
@@ -452,16 +477,50 @@ impl<H: Host> Builder<H> {
 
     /// The sandbox, with an empty Python session.
     pub fn build(self) -> Sandbox<H> {
+        let session = Repl::new_session(&self.limits);
+        self.build_with_session(session)
+    }
+
+    /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
+    /// this builder's limits. Bytes Monty can't load are [`Error::Restore`].
+    ///
+    /// Monty doesn't authenticate dumps. Bytes from anyone else can panic, abort or hang the
+    /// process, so restore only bytes you made, or set a signing key (issue #13).
+    pub fn restore(self, bytes: &[u8]) -> Result<Sandbox<H>, Error> {
+        let session = Repl::load_session(bytes, &self.limits).map_err(Error::Restore)?;
+        Ok(self.build_with_session(session))
+    }
+
+    /// The sandbox, with `session` as its idle Python session.
+    fn build_with_session(self, session: Box<MontyRepl>) -> Sandbox<H> {
         let tool_ids = self.host.tools().into_iter().map(|tool| tool.id).collect();
         Sandbox {
             host: self.host,
             repl: Repl::new(tool_ids),
-            state: Some(State::Idle(Repl::new_session(&self.limits))),
+            state: Some(State::Idle(session)),
             last_run_id: 0,
             unreported_restart: false,
             execute_wait: self.execute_wait,
             poll_wait: self.poll_wait,
             limits: self.limits,
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RunOpen { run_id } => write!(f, "run {run_id} is still running"),
+            Self::Restore(error) => write!(f, "can't restore the session: {error}"),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::RunOpen { .. } => None,
+            Self::Restore(error) => Some(error),
         }
     }
 }
