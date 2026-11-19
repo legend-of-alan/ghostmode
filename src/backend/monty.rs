@@ -11,7 +11,7 @@ use crate::sandbox::Limits;
 #[cfg(feature = "monty")]
 pub use self::in_process::Monty;
 #[cfg(feature = "monty-pool")]
-pub use self::pool::Pool;
+pub use self::pool::MontyPool;
 
 #[cfg(feature = "monty")]
 mod in_process;

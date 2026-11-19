@@ -56,7 +56,7 @@ pub struct Limits {
     pub run_time: Duration,
     /// The most memory the script may use. In-process this does not cap the script's total
     /// memory. It only refuses one value bigger than the limit, such as one huge string, with
-    /// `MemoryError`. A `backend::Pool` worker caps the script's total memory. The default is
+    /// `MemoryError`. A `backend::MontyPool` worker caps the script's total memory. The default is
     /// 256 MiB.
     pub memory_bytes: usize,
     /// How deep the script's calls may nest before it raises `RecursionError`. The default is
@@ -113,7 +113,7 @@ pub enum Status {
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
-        /// 10 MiB raises `MemoryError` in the script, or in `backend::Pool` is dropped.
+        /// 10 MiB raises `MemoryError` in the script, or in `backend::MontyPool` is dropped.
         #[serde(skip_serializing_if = "Option::is_none")]
         stdout: Option<String>,
         /// What the script printed to stderr with `print(..., file=sys.stderr)` before the

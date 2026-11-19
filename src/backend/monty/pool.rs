@@ -1,5 +1,5 @@
 //! The backend that runs each session's scripts in its own Monty worker process, checked out
-//! from a monty-pool [`monty_pool::Pool`]. Only this module talks to monty-pool.
+//! from a monty-pool [`Pool`]. Only this module talks to monty-pool.
 //!
 //! A worker that crashes takes down only itself, never the caller's process. The script's run
 //! fails with an error that says so, and the next status reports `restarted`, with no globals.
@@ -18,7 +18,7 @@ use std::error;
 use std::sync::Arc;
 
 use monty_pool::{
-    Checkout, PoolError, PrintFuture, ReplConfig, ResumeValue, TurnEvent, on_print_sync,
+    Checkout, Pool, PoolError, PrintFuture, ReplConfig, ResumeValue, TurnEvent, on_print_sync,
 };
 use monty_types::{DEFAULT_MAX_PRINT_COLLECT_BYTES, MontyException, NameLookupResult, PrintStream};
 use serde_json::Value;
@@ -28,16 +28,14 @@ use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host;
 use crate::sandbox::Limits;
 
-/// Runs each session's scripts in its own worker process from a [`monty_pool::Pool`]. Clones
+/// Runs each session's scripts in its own worker process from a monty-pool [`Pool`]. Clones
 /// share the pool's workers. Build it, and so the sandbox, inside the Tokio multi-thread runtime
 /// that built the pool. monty-pool starts workers with an empty environment, so give
 /// `monty_pool::PoolConfig::subprocess` the worker binary's full path.
 #[derive(Clone)]
-pub struct Pool {
-    workers: Arc<monty_pool::Pool>,
-}
+pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
 
-/// A Python session in [`Pool`], whose globals live in one worker process.
+/// A Python session in [`MontyPool`], whose globals live in one worker process.
 pub struct Session {
     config: ReplConfig,
     /// The session's worker, or `None` before its first script and after its worker ended.
@@ -46,7 +44,7 @@ pub struct Session {
     lost_worker: bool,
 }
 
-/// A script suspended at a tool call in [`Pool`], with what it has printed so far.
+/// A script suspended at a tool call in [`MontyPool`], with what it has printed so far.
 pub struct Suspension {
     config: ReplConfig,
     checkout: Checkout,
@@ -55,12 +53,10 @@ pub struct Suspension {
     restarted: bool,
 }
 
-impl Pool {
+impl MontyPool {
     /// A backend whose sessions each check out one of `workers`' processes.
-    pub fn new(workers: monty_pool::Pool) -> Self {
-        Self {
-            workers: Arc::new(workers),
-        }
+    pub fn new(workers: Pool) -> Self {
+        Self(Arc::new(workers))
     }
 
     /// The worker in `checkout`, or a new one checked out under `config` if there is none.
@@ -71,7 +67,7 @@ impl Pool {
     ) -> Result<Checkout, PoolError> {
         match checkout {
             Some(checkout) => Ok(checkout),
-            None => self.workers.checkout(config).await,
+            None => self.0.checkout(config).await,
         }
     }
 
@@ -136,7 +132,7 @@ impl Pool {
     }
 }
 
-impl Backend for Pool {
+impl Backend for MontyPool {
     type Session = Session;
     type Suspension = Suspension;
 
@@ -257,7 +253,7 @@ impl Backend for Pool {
         limits: &Limits,
     ) -> Result<Session, Box<dyn error::Error + Send + Sync>> {
         let config = to_repl_config(limits);
-        let mut checkout = self.workers.checkout(&config).await?;
+        let mut checkout = self.0.checkout(&config).await?;
         let mut on_print = on_print_sync(|_, _| {});
         let (suspension, _) = checkout
             .restore(bytes.to_vec(), Vec::new(), &mut on_print)
@@ -276,7 +272,7 @@ impl Backend for Pool {
 impl Suspension {
     /// How the script ended with `result`. The session keeps the worker if it is still alive,
     /// and otherwise has none, and the next script reports that it restarted.
-    fn into_ending(self, result: Result<Value, String>) -> Ending<Pool> {
+    fn into_ending(self, result: Result<Value, String>) -> Ending<MontyPool> {
         let alive = self.checkout.worker_id().is_some();
         Ending {
             result,

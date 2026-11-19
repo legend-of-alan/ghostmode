@@ -2,7 +2,7 @@
 //! that calls the `monty` crate.
 //!
 //! In-process Monty is not crash-isolated: a script, or a dump restored without a signing key,
-//! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::Pool`,
+//! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::MontyPool`,
 //! which runs each session in a worker process.
 
 use std::{error, mem};

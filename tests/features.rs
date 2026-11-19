@@ -1,5 +1,5 @@
 //! The feature scenarios: one `World`, run once per executor against `backend::Monty`, and once
-//! more against `backend::Pool` when the `monty-pool` feature is on.
+//! more against `backend::MontyPool` when the `monty-pool` feature is on.
 
 #[path = "steps/caller.rs"]
 mod caller;
@@ -85,7 +85,7 @@ enum TestBackend {
     #[default]
     Monty,
     #[cfg(feature = "monty-pool")]
-    Pool(ghostmode::backend::Pool),
+    MontyPool(ghostmode::backend::MontyPool),
 }
 
 /// A sandbox over any backend, which the When steps send each [`Request`] to.
@@ -124,7 +124,7 @@ impl World {
         match &self.backend {
             TestBackend::Monty => build(self.builder(Monty), dump).await,
             #[cfg(feature = "monty-pool")]
-            TestBackend::Pool(pool) => build(self.builder(pool.clone()), dump).await,
+            TestBackend::MontyPool(pool) => build(self.builder(pool.clone()), dump).await,
         }
     }
 
@@ -214,7 +214,7 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
     let backend_tag = match backend {
         TestBackend::Monty => "monty",
         #[cfg(feature = "monty-pool")]
-        TestBackend::Pool(_) => "pool",
+        TestBackend::MontyPool(_) => "pool",
     };
     let mut cli = cucumber::cli::Opts::parsed();
     let name_filter = cli.re_filter.take();
@@ -275,7 +275,7 @@ fn main() {
                 .expect("monty-pool starts the `monty` worker");
             run_scenarios(
                 true,
-                TestBackend::Pool(ghostmode::backend::Pool::new(workers)),
+                TestBackend::MontyPool(ghostmode::backend::MontyPool::new(workers)),
             )
             .await
         });
