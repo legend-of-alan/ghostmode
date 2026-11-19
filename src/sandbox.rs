@@ -11,7 +11,7 @@ use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::host::{self, Host};
-use crate::repl::{DumpError, MontyRepl, Progress, Repl, ReplFunctionCall};
+use crate::repl::{CollectedStreams, DumpError, MontyRepl, Progress, Repl, ReplFunctionCall};
 
 /// One Python session that runs the model's scripts, and the host whose tools they call.
 /// Globals persist from one `execute` to the next, and one run is in flight at a time.
@@ -57,10 +57,10 @@ pub struct Limits {
     /// `poll` before it expires. The default is unset, no limit.
     pub idle_timeout: Option<Duration>,
     /// How many characters of output a status carries: a finished value or an error, together
-    /// with what the script printed. Output over it keeps its head and tail around a marker
-    /// such as `[… 60,000 of 100,000 characters cut …]`, and a value cut this way becomes a
-    /// string. A value is counted as its JSON text, except a string, which is counted as its
-    /// own text. The default is 40,000.
+    /// with what the script printed to stdout and stderr. Output over it keeps its head and
+    /// tail around a marker such as `[… 60,000 of 100,000 characters cut …]`, and a value cut
+    /// this way becomes a string. A value is counted as its JSON text, except a string, which
+    /// is counted as its own text. The default is 40,000.
     pub output_chars: usize,
 }
 
@@ -73,9 +73,12 @@ pub enum Status {
     Finished {
         /// The value as JSON.
         value: Value,
-        /// What the script printed, if it printed anything.
+        /// What the script printed to stdout, if it printed anything there.
         #[serde(skip_serializing_if = "Option::is_none")]
-        printed: Option<String>,
+        stdout: Option<String>,
+        /// What the script printed to stderr with `print(..., file=sys.stderr)`, if anything.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
         /// Whether the session started fresh before this script, with no globals. Serialized
         /// only when true.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -93,10 +96,15 @@ pub enum Status {
         /// The tool calls the host answered before the failure. Each argument is cut to its
         /// share of [`Limits::output_chars`], which is `output_chars / calls_per_execute`.
         calls: Vec<host::Call>,
-        /// What the script printed before the failure, if it printed anything. A print that
-        /// would take the script's prints past 10 MiB raises `MemoryError` in the script.
+        /// What the script printed to stdout before the failure, if it printed anything there.
+        /// A print that would take the script's prints on stdout and stderr together past
+        /// 10 MiB raises `MemoryError` in the script.
         #[serde(skip_serializing_if = "Option::is_none")]
-        printed: Option<String>,
+        stdout: Option<String>,
+        /// What the script printed to stderr with `print(..., file=sys.stderr)` before the
+        /// failure, if anything. The traceback is in `error`, not here.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
         /// Whether the session started fresh before this script, with no globals. Serialized
         /// only when true.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -126,7 +134,7 @@ enum State {
 struct Run {
     id: u64,
     answered_calls: Vec<host::Call>,
-    printed: String,
+    streams: CollectedStreams,
     call: host::Call,
     function_call: Box<ReplFunctionCall>,
     /// The host's answer to `call`, or `None` once the call timeout passes first.
@@ -190,7 +198,8 @@ impl<H: Host> Sandbox<H> {
                     return Status::Failed {
                         error,
                         calls: Vec::new(),
-                        printed: None,
+                        stdout: None,
+                        stderr: None,
                         restarted: false,
                     };
                 }
@@ -198,9 +207,9 @@ impl<H: Host> Sandbox<H> {
             self.last_run_id += 1;
             let id = self.last_run_id;
             Span::current().record("run_id", id).record("call_count", 0);
-            let mut printed = String::new();
-            let progress = self.repl.feed_start(session, code, &mut printed);
-            if let Some(status) = self.suspend_or_end(id, Vec::new(), printed, progress) {
+            let mut streams = CollectedStreams::default();
+            let progress = self.repl.feed_start(session, code, &mut streams);
+            if let Some(status) = self.suspend_or_end(id, Vec::new(), streams, progress) {
                 return status;
             }
             self.wait_timeout(self.execute_wait).await
@@ -227,7 +236,8 @@ impl<H: Host> Sandbox<H> {
                 return Status::Failed {
                     error,
                     calls: Vec::new(),
-                    printed: None,
+                    stdout: None,
+                    stderr: None,
                     restarted: false,
                 };
             }
@@ -307,7 +317,7 @@ impl<H: Host> Sandbox<H> {
             let Run {
                 id,
                 mut answered_calls,
-                mut printed,
+                mut streams,
                 call,
                 function_call,
                 ..
@@ -316,14 +326,14 @@ impl<H: Host> Sandbox<H> {
                 Some(answer) => {
                     answered_calls.push(self.cut_args(call));
                     Span::current().record("call_count", answered_calls.len());
-                    self.repl.resume(function_call, answer, &mut printed)
+                    self.repl.resume(function_call, answer, &mut streams)
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    self.repl.abort(function_call, message, &mut printed)
+                    self.repl.abort(function_call, message, &mut streams)
                 }
             };
-            if let Some(status) = self.suspend_or_end(id, answered_calls, printed, progress) {
+            if let Some(status) = self.suspend_or_end(id, answered_calls, streams, progress) {
                 return status;
             }
         }
@@ -335,7 +345,7 @@ impl<H: Host> Sandbox<H> {
         &mut self,
         id: u64,
         answered_calls: Vec<host::Call>,
-        mut printed: String,
+        mut streams: CollectedStreams,
         mut progress: Progress,
     ) -> Option<Status> {
         let call_limit = self.limits.calls_per_execute;
@@ -343,7 +353,7 @@ impl<H: Host> Sandbox<H> {
             && let Progress::Call { function_call, .. } = progress
         {
             let message = format!("the script reached the call limit of {call_limit}");
-            progress = self.repl.abort(function_call, message, &mut printed);
+            progress = self.repl.abort(function_call, message, &mut streams);
         }
         match progress {
             Progress::Call {
@@ -354,7 +364,7 @@ impl<H: Host> Sandbox<H> {
                 self.state = Some(State::Suspended(Run {
                     id,
                     answered_calls,
-                    printed,
+                    streams,
                     call,
                     function_call,
                     answer,
@@ -363,7 +373,7 @@ impl<H: Host> Sandbox<H> {
                 None
             }
             Progress::Ended { result, session } => {
-                Some(self.end_run(session, result, answered_calls, printed))
+                Some(self.end_run(session, result, answered_calls, streams))
             }
         }
     }
@@ -374,39 +384,49 @@ impl<H: Host> Sandbox<H> {
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
         let session = Repl::abandon(run.function_call);
         let error = format!("run {} expired", run.id);
-        Some(self.end_run(session, Err(error), run.answered_calls, run.printed))
+        Some(self.end_run(session, Err(error), run.answered_calls, run.streams))
     }
 
-    /// Ends the run: `session` is idle again, and the script's result and what it printed become
-    /// the status, cut to share [`Limits::output_chars`]. The status is `restarted` if the
-    /// session started fresh since the last status that was.
+    /// Ends the run: `session` is idle again, and the script's result and what it printed to
+    /// stdout and stderr become the status. The result gets its share of
+    /// [`Limits::output_chars`] against both streams together, and the two streams then share
+    /// the rest. The status is `restarted` if the session started fresh since the last status
+    /// that was.
     fn end_run(
         &mut self,
         session: Box<MontyRepl>,
         result: Result<Value, String>,
         answered_calls: Vec<host::Call>,
-        printed: String,
+        streams: CollectedStreams,
     ) -> Status {
         self.state = Some(State::Idle(session));
         let result_chars = match &result {
             Ok(value) => count_chars(value),
             Err(error) => error.chars().count(),
         };
-        let printed_chars = printed.chars().count();
-        let (result_share, printed_share) =
-            split_budget(self.limits.output_chars, result_chars, printed_chars);
-        let printed = (!printed.is_empty()).then(|| cut_text(printed, printed_share));
+        let (stdout, stderr) = Repl::split_streams(streams);
+        let (stdout_chars, stderr_chars) = (stdout.chars().count(), stderr.chars().count());
+        let (result_share, prints_share) = split_budget(
+            self.limits.output_chars,
+            result_chars,
+            stdout_chars + stderr_chars,
+        );
+        let (stdout_share, stderr_share) = split_budget(prints_share, stdout_chars, stderr_chars);
+        let stdout = (!stdout.is_empty()).then(|| cut_text(stdout, stdout_share));
+        let stderr = (!stderr.is_empty()).then(|| cut_text(stderr, stderr_share));
         let restarted = mem::take(&mut self.unreported_restart);
         match result {
             Ok(value) => Status::Finished {
                 value: cut_value(value, result_share),
-                printed,
+                stdout,
+                stderr,
                 restarted,
             },
             Err(error) => Status::Failed {
                 error: cut_text(error, result_share),
                 calls: answered_calls,
-                printed,
+                stdout,
+                stderr,
                 restarted,
             },
         }
@@ -599,15 +619,15 @@ fn group_thousands(number: usize) -> String {
     grouped
 }
 
-/// How many of `budget` characters a run's result and its prints each get, as
-/// `(result_share, printed_share)`. Each gets what it needs, and when both need more, they
-/// split the budget evenly.
-fn split_budget(budget: usize, result_chars: usize, printed_chars: usize) -> (usize, usize) {
-    let printed_share = budget
-        .saturating_sub(result_chars)
+/// How many of `budget` characters two texts of `first_chars` and `second_chars` each get, as
+/// `(first_share, second_share)`. Each gets what it needs, and when both need more, they split
+/// the budget evenly, the first taking any odd character.
+fn split_budget(budget: usize, first_chars: usize, second_chars: usize) -> (usize, usize) {
+    let second_share = budget
+        .saturating_sub(first_chars)
         .max(budget / 2)
-        .min(printed_chars);
-    (budget - printed_share, printed_share)
+        .min(second_chars);
+    (budget - second_share, second_share)
 }
 
 /// Records on `span` the status a traced step ended with and how long it took since `started`.
