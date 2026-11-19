@@ -29,7 +29,7 @@ impl Server {
             let mcp_id = mcp_tool.name.into_owned();
             let tool_id = to_tool_id(&mcp_id);
             if !schema::is_python_identifier(&tool_id) {
-                return Err(Error::KeywordId { tool_id });
+                return Err(Error::UncallableId { tool_id });
             }
             if let Some(other) = mcp_ids.insert(tool_id.clone(), mcp_id.clone()) {
                 let mcp_ids = [other, mcp_id];
@@ -81,8 +81,8 @@ pub enum Error {
         /// The two tools' MCP ids.
         mcp_ids: [String; 2],
     },
-    /// An MCP tool's id is a Python keyword, so a script can't call it.
-    KeywordId {
+    /// An MCP tool's id isn't a Python identifier, so a script can't call it.
+    UncallableId {
         /// The tool's id, which is also its MCP id.
         tool_id: String,
     },
@@ -99,10 +99,10 @@ impl fmt::Display for Error {
                 f,
                 "MCP tools `{first}` and `{second}` both map to the id `{tool_id}`"
             ),
-            Self::KeywordId { tool_id } => {
+            Self::UncallableId { tool_id } => {
                 write!(
                     f,
-                    "MCP tool `{tool_id}` is a Python keyword, so a script can't call it"
+                    "MCP tool `{tool_id}` is not a Python name a script can call"
                 )
             }
         }
@@ -113,7 +113,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ListTools(err) => Some(err),
-            Self::SharedId { .. } | Self::KeywordId { .. } => None,
+            Self::SharedId { .. } | Self::UncallableId { .. } => None,
         }
     }
 }
