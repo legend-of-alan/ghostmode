@@ -6,16 +6,18 @@ use cucumber::{then, when};
 use crate::test_host::parse_json;
 use crate::{Request, World};
 
-#[when(regex = r"^the model executes (.*[^:])$")]
-async fn execute_code(world: &mut World, code: String) {
+#[when(regex = r"^the model executes (.*?[^:])( with restart)?$")]
+async fn execute_code(world: &mut World, code: String, with_restart: String) {
     let code = code.replace("; ", "\n");
-    world.send(Request::Execute(code)).await;
+    let restart = !with_restart.is_empty();
+    world.send(Request::Execute { code, restart }).await;
 }
 
 #[when(regex = r"^the model executes this script:$")]
 async fn execute_docstring(world: &mut World, step: &Step) {
     let code = step.docstring.clone().expect("a script docstring");
-    world.send(Request::Execute(code)).await;
+    let restart = false;
+    world.send(Request::Execute { code, restart }).await;
 }
 
 #[when(regex = r"^the model polls run (\d+)$")]
@@ -50,4 +52,9 @@ fn wait_lasted_between(world: &mut World, least_ms: u64, under_secs: u64) {
 #[then(regex = r#"^the status's printed text is (".*")$"#)]
 fn printed_text_is(world: &mut World, printed: String) {
     assert_eq!(world.status["printed"], parse_json(&printed));
+}
+
+#[then(regex = r"^the status says the session restarted$")]
+fn status_says_restarted(world: &mut World) {
+    assert_eq!(world.status["restarted"], true, "{}", world.status);
 }

@@ -47,7 +47,8 @@ fn openai_functions_match_mcp_tools(world: &mut World) {
 }
 
 /// Sends the model's call to the sandbox. Each argument is taken out as the sandbox method
-/// needs it, so an argument the call lacks, or one the method doesn't take, fails the step.
+/// needs it, so a required argument the call lacks, or one the method doesn't take, fails the
+/// step.
 #[when(regex = r"^the model calls `(execute|poll)` with (\{.*\})$")]
 async fn call_model_tool(world: &mut World, tool_id: String, args: String) {
     let mut args = parse_json(&args)
@@ -55,28 +56,39 @@ async fn call_model_tool(world: &mut World, tool_id: String, args: String) {
         .cloned()
         .expect("an args object");
     let request = match tool_id.as_str() {
-        "execute" => Request::Execute(take_arg(&mut args, "code").as_str().expect("code").into()),
+        "execute" => Request::Execute {
+            code: take_arg(&mut args, "code").as_str().expect("code").into(),
+            restart: args
+                .remove("restart")
+                .is_some_and(|restart| restart.as_bool().expect("restart")),
+        },
         _ => Request::Poll(take_arg(&mut args, "run_id").as_u64().expect("run_id")),
     };
     assert!(args.is_empty(), "{tool_id} takes no {args:?}");
     world.send(request).await;
 }
 
-#[then(
-    regex = r"^the `(execute|poll)` schema declares exactly `(\w+)` as an? (string|integer), required, with additionalProperties false$"
-)]
-fn model_tool_declares_exactly(world: &mut World, tool_id: String, arg: String, arg_type: String) {
-    let tools = schema::list_mcp_tools(&world.host.tools());
-    let tool = tools.iter().find(|tool| tool["name"] == tool_id.as_str());
-    let input_schema = &tool.expect("a listed tool")["inputSchema"];
-    let properties = &input_schema["properties"];
+#[then(regex = r"^the `(execute|poll)` schema declares exactly (`\w+`(?: and `\w+`)*)$")]
+fn model_tool_declares_exactly(world: &mut World, tool_id: String, args: String) {
+    let input_schema = input_schema_of(world, &tool_id);
+    let arg_ids: BTreeSet<&str> = args
+        .split(" and ")
+        .map(|arg| arg.trim_matches('`'))
+        .collect();
     assert_eq!(
-        object_keys(properties),
-        BTreeSet::from([arg.as_str()]),
+        object_keys(&input_schema["properties"]),
+        arg_ids,
         "{input_schema}"
     );
+}
+
+#[then(
+    regex = r"^the `(execute|poll)` schema requires exactly `(\w+)` as an? (string|integer), with additionalProperties false$"
+)]
+fn model_tool_requires_exactly(world: &mut World, tool_id: String, arg: String, arg_type: String) {
+    let input_schema = input_schema_of(world, &tool_id);
     assert_eq!(
-        properties[&arg]["type"],
+        input_schema["properties"][&arg]["type"],
         arg_type.as_str(),
         "{input_schema}"
     );
@@ -89,6 +101,26 @@ fn model_tool_declares_exactly(world: &mut World, tool_id: String, arg: String, 
         input_schema["additionalProperties"], false,
         "{input_schema}"
     );
+}
+
+#[then(
+    regex = r"^the `(execute|poll)` schema declares `(\w+)` as a boolean, not required, defaulting to false$"
+)]
+fn model_tool_declares_optional_flag(world: &mut World, tool_id: String, arg: String) {
+    let input_schema = input_schema_of(world, &tool_id);
+    let property = &input_schema["properties"][&arg];
+    assert_eq!(property["type"], "boolean", "{input_schema}");
+    assert_eq!(property["default"], false, "{input_schema}");
+    let required = input_schema["required"].as_array().expect("required");
+    assert!(!required.contains(&Value::from(arg)), "{input_schema}");
+}
+
+/// The input schema of the model's tool `tool_id` that `list_mcp_tools` lists for the
+/// scenario's host.
+fn input_schema_of(world: &World, tool_id: &str) -> Value {
+    let tools = schema::list_mcp_tools(&world.host.tools());
+    let tool = tools.iter().find(|tool| tool["name"] == tool_id);
+    tool.expect("a listed tool")["inputSchema"].clone()
 }
 
 #[then(regex = r#"^the execute description contains "(.+)"$"#)]

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cucumber::{given, when};
+use cucumber::{given, then, when};
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, FutureExt};
 use ghostmode::Limits;
@@ -155,14 +155,25 @@ fn sandbox_limit(world: &mut World, field: String, number: usize, unit: String) 
 
 #[when(regex = r"^`(\w+)` answers (.+)$")]
 fn held_call_answers(world: &mut World, tool_id: String, answer: String) {
+    let sender = take_held_call(world, &tool_id);
+    sender
+        .send(parse_json(&answer))
+        .expect("the run still waits");
+}
+
+#[then(regex = r"^answering `(\w+)` finds no run waiting$")]
+fn held_call_finds_no_run(world: &mut World, tool_id: String) {
+    let sender = take_held_call(world, &tool_id);
+    assert!(sender.send(Value::Null).is_err(), "a run still waits");
+}
+
+/// Takes the sending half that answers the held call to `tool_id`, failing if there is none.
+fn take_held_call(world: &mut World, tool_id: &str) -> oneshot::Sender<Value> {
     let sender = world
         .host
         .held_calls
         .lock()
         .expect("held calls")
-        .remove(&tool_id);
-    let sender = sender.unwrap_or_else(|| panic!("no {tool_id} call waits for its answer"));
-    sender
-        .send(parse_json(&answer))
-        .expect("the run still waits");
+        .remove(tool_id);
+    sender.unwrap_or_else(|| panic!("no {tool_id} call waits for its answer"))
 }
