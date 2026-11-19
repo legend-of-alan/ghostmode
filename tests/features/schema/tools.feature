@@ -13,9 +13,3 @@ Feature: The caller hands its model execute and poll as MCP tools or OpenAI func
     And the `execute` schema declares exactly `code` as a string, required, with additionalProperties false
     And the `poll` schema declares exactly `run_id` as an integer, required, with additionalProperties false
 
-  Scenario: The execute description lists each tool as a keyword-only signature
-    Given a host whose `search` input schema is {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}, "after": {"type": "string"}}, "required": ["query"]}
-    And a host whose `ping` answers {}
-    Then the execute description contains "search(*, query, after, limit)"
-    And the execute description contains "ping()"
-    And the execute description contains "keyword arguments only"

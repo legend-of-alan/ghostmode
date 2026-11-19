@@ -9,14 +9,7 @@ use rmcp::{Peer, RoleClient, ServiceError};
 use serde_json::Value;
 
 use crate::host::{self, Call, Host, Tool};
-
-/// The words Python reserves, which a script can't call as a function.
-const PYTHON_KEYWORDS: &[&str] = &[
-    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
-    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
-    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
-    "with", "yield",
-];
+use crate::schema;
 
 /// A host that wraps the MCP server at the other end of `peer`: it offers the server's tools to
 /// scripts and sends each call to the server as `tools/call`. It lists the tools when built and
@@ -47,7 +40,7 @@ impl Server {
         for mcp_tool in self.peer.list_all_tools().await.map_err(Error::ListTools)? {
             let mcp_id = mcp_tool.name.into_owned();
             let tool_id = to_tool_id(&mcp_id);
-            if PYTHON_KEYWORDS.contains(&tool_id.as_str()) {
+            if !schema::is_python_identifier(&tool_id) {
                 return Err(Error::KeywordId { tool_id });
             }
             if let Some(other) = mcp_ids.insert(tool_id.clone(), mcp_id.clone()) {
