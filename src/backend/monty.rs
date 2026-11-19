@@ -1,4 +1,4 @@
-//! The backends that run scripts in Monty: `repl` in the caller's process, and `pool` in
+//! The backends that run scripts in Monty: `in_process` in the caller's process, and `pool` in
 //! monty-pool worker processes, with what they share. Only this module and its children name
 //! Monty's types.
 
@@ -8,15 +8,15 @@ use monty_types::{OsPolicy, ResourceLimits, SleepMode};
 
 use crate::sandbox::Limits;
 
+#[cfg(feature = "monty")]
+pub use self::in_process::Monty;
 #[cfg(feature = "monty-pool")]
 pub use self::pool::Pool;
-#[cfg(feature = "monty")]
-pub use self::repl::Monty;
 
+#[cfg(feature = "monty")]
+mod in_process;
 #[cfg(feature = "monty-pool")]
 mod pool;
-#[cfg(feature = "monty")]
-mod repl;
 mod value;
 
 /// The name each session gives its scripts.
