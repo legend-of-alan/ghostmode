@@ -30,10 +30,6 @@ pub struct Sandbox<H, B: Backend> {
 }
 
 /// Sets up a [`Sandbox`]. Made by [`Builder::new`].
-#[cfg_attr(
-    feature = "monty",
-    doc = "With the `monty` feature, also made by [`Sandbox::builder`]."
-)]
 pub struct Builder<H, B> {
     host: H,
     backend: B,

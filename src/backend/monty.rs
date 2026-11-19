@@ -40,7 +40,7 @@ pub struct Suspension {
 }
 
 impl<H: Host> Sandbox<H, Monty> {
-    /// A builder for a sandbox whose scripts call `host`'s tools and run in Monty inside this
+    /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
     /// process.
     pub fn builder(host: H) -> Builder<H, Monty> {
         let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
