@@ -10,7 +10,9 @@ Feature: The caller hands its model execute and poll as MCP tools or OpenAI func
     Then the status is {"status": "finished", "value": 2, "restarted": true}
     When the model calls `poll` with {"run_id": 1}
     Then the status is failed with an error naming no run 1
+    And the `execute` schema declares exactly `code` and `restart`
     And the `execute` schema requires exactly `code` as a string, with additionalProperties false
     And the `execute` schema declares `restart` as a boolean, not required, defaulting to false
+    And the `poll` schema declares exactly `run_id`
     And the `poll` schema requires exactly `run_id` as an integer, with additionalProperties false
 

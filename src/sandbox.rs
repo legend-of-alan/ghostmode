@@ -77,7 +77,7 @@ pub enum Status {
         printed: Option<String>,
         /// Whether the session started fresh before this script, with no globals. Serialized
         /// only when true.
-        #[serde(skip_serializing_if = "is_false")]
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
         restarted: bool,
     },
     /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
@@ -98,7 +98,7 @@ pub enum Status {
         printed: Option<String>,
         /// Whether the session started fresh before this script, with no globals. Serialized
         /// only when true.
-        #[serde(skip_serializing_if = "is_false")]
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
         restarted: bool,
     },
 }
@@ -474,11 +474,6 @@ impl Status {
             Self::Failed { .. } => "failed",
         }
     }
-}
-
-/// Whether `flag` is false, so serde skips a `restarted: false`.
-fn is_false(flag: &bool) -> bool {
-    !flag
 }
 
 /// How many characters `value` counts for against [`Limits::output_chars`]: a string's own

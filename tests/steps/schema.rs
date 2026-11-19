@@ -68,11 +68,25 @@ async fn call_model_tool(world: &mut World, tool_id: String, args: String) {
     world.send(request).await;
 }
 
+#[then(regex = r"^the `(execute|poll)` schema declares exactly (`\w+`(?: and `\w+`)*)$")]
+fn model_tool_declares_exactly(world: &mut World, tool_id: String, args: String) {
+    let input_schema = input_schema_of(world, &tool_id);
+    let arg_ids: BTreeSet<&str> = args
+        .split(" and ")
+        .map(|arg| arg.trim_matches('`'))
+        .collect();
+    assert_eq!(
+        object_keys(&input_schema["properties"]),
+        arg_ids,
+        "{input_schema}"
+    );
+}
+
 #[then(
     regex = r"^the `(execute|poll)` schema requires exactly `(\w+)` as an? (string|integer), with additionalProperties false$"
 )]
 fn model_tool_requires_exactly(world: &mut World, tool_id: String, arg: String, arg_type: String) {
-    let input_schema = model_tool_input_schema(world, &tool_id);
+    let input_schema = input_schema_of(world, &tool_id);
     assert_eq!(
         input_schema["properties"][&arg]["type"],
         arg_type.as_str(),
@@ -93,7 +107,7 @@ fn model_tool_requires_exactly(world: &mut World, tool_id: String, arg: String, 
     regex = r"^the `(execute|poll)` schema declares `(\w+)` as a boolean, not required, defaulting to false$"
 )]
 fn model_tool_declares_optional_flag(world: &mut World, tool_id: String, arg: String) {
-    let input_schema = model_tool_input_schema(world, &tool_id);
+    let input_schema = input_schema_of(world, &tool_id);
     let property = &input_schema["properties"][&arg];
     assert_eq!(property["type"], "boolean", "{input_schema}");
     assert_eq!(property["default"], false, "{input_schema}");
@@ -103,7 +117,7 @@ fn model_tool_declares_optional_flag(world: &mut World, tool_id: String, arg: St
 
 /// The input schema of the model's tool `tool_id` that `list_mcp_tools` lists for the
 /// scenario's host.
-fn model_tool_input_schema(world: &World, tool_id: &str) -> Value {
+fn input_schema_of(world: &World, tool_id: &str) -> Value {
     let tools = schema::list_mcp_tools(&world.host.tools());
     let tool = tools.iter().find(|tool| tool["name"] == tool_id);
     tool.expect("a listed tool")["inputSchema"].clone()
