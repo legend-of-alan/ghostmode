@@ -62,7 +62,8 @@ pub struct Limits {
     /// How long one tool call may wait for the host's answer. The default is unset, no limit.
     pub call_timeout: Option<Duration>,
     /// How long a run that `execute` or `poll` left `running` may wait for the next `execute` or
-    /// `poll` before it expires. The default is unset, no limit.
+    /// `poll` before it expires. A run whose host has answered by then doesn't expire, and the
+    /// next `poll` resumes it. The default is unset, no limit.
     pub idle_timeout: Option<Duration>,
     /// How many characters of output a status carries: a finished value or an error, together
     /// with what the script printed to stdout and stderr. Output over it keeps its head and
@@ -141,7 +142,7 @@ enum State<B: Backend> {
     Suspended(Run<B>),
 }
 
-/// A script suspended at a tool call the host has not answered yet.
+/// A script suspended at a tool call, with the host's answer still to be picked up.
 struct Run<B: Backend> {
     id: u64,
     answered_calls: Vec<host::Call>,
@@ -170,9 +171,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
     /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
     /// script that fails is a `failed` status, as is a request while another run is still
-    /// running. If a run waited past its idle timeout, it expires and `execute` answers its
-    /// `failed` status without running `code`. With `restart`, an idle session starts fresh
-    /// before `code` runs, so the script sees no globals.
+    /// running. If a run waited past its idle timeout with no answer from the host, it expires
+    /// and `execute` answers its `failed` status without running `code`. With `restart`, an
+    /// idle session starts fresh before `code` runs, so the script sees no globals.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         let span = tracing::info_span!(
             "execute",
@@ -382,9 +383,16 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
     }
 
-    /// Ends the suspended run if it has waited past the idle timeout, and says it expired.
+    /// Ends the suspended run if it has waited past the idle timeout and the host's answer is not
+    /// ready, and says it expired. A run whose answer is ready stays for the next wait to resume.
     async fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.limits.idle_timeout?;
+        if let Some(State::Suspended(run)) = &mut self.state
+            && let Some(answer) = (&mut run.answer).now_or_never()
+        {
+            run.answer = future::ready(answer).boxed();
+            return None;
+        }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
         let (session, streams) = self.backend.abandon(run.suspension).await;
         let error = format!("run {} expired", run.id);
