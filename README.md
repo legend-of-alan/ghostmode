@@ -45,9 +45,9 @@ Write a host, build a `Sandbox`, and give the model the `execute` and `poll` def
 
 The [crate docs on docs.rs](https://docs.rs/ghostmode) open with a full example: a host with one tool, and a `Sandbox` that runs one script.
 
-`schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.
+`schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Builder::new` instead of writing your own host.
 
-The default backend, `Monty`, runs the script inside your process and isn't crash-isolated. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`, which runs each session in its own worker process. On Tokio, read [Where scripts run](docs/extending.md#where-scripts-run) first.
+`Monty`, from the `monty` feature that is on by default, runs the script inside your process and isn't crash-isolated. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`, which runs each session in its own worker process. On Tokio, read [Where scripts run](docs/extending.md#where-scripts-run) first.
 
 `Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Before you store dumps where others can write, set `Builder::signing_key`. Restore then refuses bytes the key didn't sign.
 

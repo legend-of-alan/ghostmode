@@ -13,8 +13,6 @@ use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
-#[cfg(feature = "monty")]
-use crate::backend::Monty;
 use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host::{self, Host};
 
@@ -38,9 +36,9 @@ pub struct Sandbox<H, B: Backend> {
     unreported_restart: bool,
 }
 
-/// Sets up a [`Sandbox`]. Made by `Sandbox::builder` (with the `monty` feature) or [`Builder::new`].
-/// The built sandbox keeps its builder and runs with its host, backend, waits, limits and signing
-/// key. Its `Debug` output never shows the signing key.
+/// Sets up a [`Sandbox`]. Made by [`Builder::new`], which names the backend. The built sandbox
+/// keeps its builder and runs with its host, backend, waits, limits and signing key. Its `Debug`
+/// output never shows the signing key.
 pub struct Builder<H, B> {
     host: H,
     tool_ids: Vec<String>,
@@ -532,15 +530,6 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
         .instrument(span)
         .boxed()
-    }
-}
-
-#[cfg(feature = "monty")]
-impl<H: Host> Sandbox<H, Monty> {
-    /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
-    /// process.
-    pub fn builder(host: H) -> Builder<H, Monty> {
-        Builder::new(host, Monty)
     }
 }
 

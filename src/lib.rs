@@ -7,7 +7,9 @@
 //! ```no_run
 //! use futures_util::future::{BoxFuture, FutureExt};
 //! use ghostmode::host::{self, Call, Host, Tool};
-//! use ghostmode::{Sandbox, schema};
+//! # #[cfg(feature = "monty")]
+//! use ghostmode::backend::Monty;
+//! use ghostmode::{Builder, schema};
 //! use serde_json::{Value, json};
 //!
 //! struct Echo;
@@ -35,7 +37,7 @@
 //! # async fn execute_echo() {
 //! let host = Echo;
 //! let definitions = schema::list_mcp_tools(&host.tools());
-//! let mut sandbox = Sandbox::builder(host).build().await;
+//! let mut sandbox = Builder::new(host, Monty).build().await;
 //! let status = sandbox.execute("echo(text='hello')", false).await;
 //! let reply = serde_json::to_value(&status).unwrap();
 //! # }
