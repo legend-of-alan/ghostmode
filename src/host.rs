@@ -22,6 +22,7 @@ pub trait Host {
 
 /// A tool the host provides. A script calls it by its id, with keyword arguments.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Tool {
     /// The id a script calls the tool by, as a Python function. It must be a Python identifier
     /// that isn't a keyword, as [`crate::schema::is_python_identifier`] checks.
@@ -33,13 +34,36 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
+impl Tool {
+    /// A tool a script calls by `id`, which the model reads about in `description`, and whose
+    /// keyword arguments follow the JSON Schema `input_schema`.
+    pub fn new(id: impl Into<String>, description: impl Into<String>, input_schema: Value) -> Self {
+        Self {
+            id: id.into(),
+            description: description.into(),
+            input_schema,
+        }
+    }
+}
+
 /// A tool call from a script to the host, and an entry in a failed status's `calls`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Call {
     /// The id of the tool the script called.
     pub tool_id: String,
     /// The call's keyword arguments.
     pub args: Map<String, Value>,
+}
+
+impl Call {
+    /// A call to the tool `tool_id` with the keyword arguments `args`.
+    pub fn new(tool_id: impl Into<String>, args: Map<String, Value>) -> Self {
+        Self {
+            tool_id: tool_id.into(),
+            args,
+        }
+    }
 }
 
 /// Why the host answered a call with no value, from the host to the script.

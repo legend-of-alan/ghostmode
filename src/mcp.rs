@@ -13,7 +13,7 @@ use crate::schema;
 
 /// A host that wraps the MCP server at the other end of `peer`: it offers the server's tools to
 /// scripts and sends each call to the server as `tools/call`. It lists the tools once, when built.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Server {
     peer: Peer<RoleClient>,
     tools: Vec<Tool>,
@@ -36,11 +36,9 @@ impl Server {
                 let mcp_ids = [other, mcp_id];
                 return Err(Error::SharedId { tool_id, mcp_ids });
             }
-            tools.push(Tool {
-                id: tool_id,
-                description: mcp_tool.description.unwrap_or_default().into_owned(),
-                input_schema: Value::Object((*mcp_tool.input_schema).clone()),
-            });
+            let description = mcp_tool.description.unwrap_or_default();
+            let input_schema = Value::Object((*mcp_tool.input_schema).clone());
+            tools.push(Tool::new(tool_id, description, input_schema));
         }
         Ok(Self {
             peer,

@@ -40,18 +40,18 @@ pub(crate) struct TestHost {
 
 impl Host for TestHost {
     fn tools(&self) -> Vec<host::Tool> {
-        let tools = self.answers.keys().map(|id| host::Tool {
-            id: id.clone(),
-            description: self
+        let tools = self.answers.keys().map(|id| {
+            let description = self
                 .descriptions
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| format!("The scenario's {id} tool.")),
-            input_schema: self
+                .unwrap_or_else(|| format!("The scenario's {id} tool."));
+            let input_schema = self
                 .input_schemas
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!({"type": "object"})),
+                .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+            host::Tool::new(id, description, input_schema)
         });
         let mcp_tools = self
             .mcp_client
@@ -147,10 +147,7 @@ fn held_call_answers(world: &mut World, tool_id: String, answer: String) {
 
 #[when(regex = r"^the caller calls `(\w+)` on the host$")]
 async fn caller_calls_host(world: &mut World, tool_id: String) {
-    let call = host::Call {
-        tool_id,
-        args: serde_json::Map::new(),
-    };
+    let call = host::Call::new(tool_id, serde_json::Map::new());
     let error = world
         .host
         .call(&call)

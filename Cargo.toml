@@ -13,6 +13,7 @@ exclude = [".github", "AGENTS.md", "assets", "rust-toolchain.toml", "tests/doc_c
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 futures-timer = "3"

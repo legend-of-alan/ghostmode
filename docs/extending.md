@@ -84,21 +84,14 @@ struct Notes {
 
 impl Host for Notes {
     fn tools(&self) -> Vec<Tool> {
+        let note_schema = json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } },
+            "required": ["text"],
+        });
         vec![
-            Tool {
-                id: "add_note".into(),
-                description: "Saves a note.".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": { "text": { "type": "string" } },
-                    "required": ["text"],
-                }),
-            },
-            Tool {
-                id: "list_notes".into(),
-                description: "Returns every saved note.".into(),
-                input_schema: json!({ "type": "object" }),
-            },
+            Tool::new("add_note", "Saves a note.", note_schema),
+            Tool::new("list_notes", "Returns every saved note.", json!({ "type": "object" })),
         ]
     }
 
@@ -188,7 +181,7 @@ impl Backend for OneCall {
             let streams = Streams::default();
             return Progress::Ended(Ending { result, streams, session, lost_globals: false });
         }
-        let call = Call { tool_id, args: Map::new() };
+        let call = Call::new(tool_id, Map::new());
         Progress::Call { call, suspension: () }
     }
 

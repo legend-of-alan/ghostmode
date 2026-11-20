@@ -16,15 +16,12 @@
 //!
 //! impl Host for Echo {
 //!     fn tools(&self) -> Vec<Tool> {
-//!         vec![Tool {
-//!             id: "echo".into(),
-//!             description: "Returns the text you pass it.".into(),
-//!             input_schema: json!({
-//!                 "type": "object",
-//!                 "properties": { "text": { "type": "string" } },
-//!                 "required": ["text"],
-//!             }),
-//!         }]
+//!         let input_schema = json!({
+//!             "type": "object",
+//!             "properties": { "text": { "type": "string" } },
+//!             "required": ["text"],
+//!         });
+//!         vec![Tool::new("echo", "Returns the text you pass it.", input_schema)]
 //!     }
 //!
 //!     fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
@@ -50,6 +47,8 @@
 //! - `monty-pool` adds `backend::MontyPool`, which runs each session in its own Monty worker
 //!   process. Untrusted scripts belong there.
 //! - `rmcp` adds `mcp::Server`, a host that offers a connected MCP server's tools to scripts.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod backend;
 pub mod host;
