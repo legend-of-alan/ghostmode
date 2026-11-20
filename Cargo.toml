@@ -1,11 +1,18 @@
 [package]
 name = "ghostmode"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
-description = "Code Mode for Rust agents: sandboxed execute and poll tools for agentic REPL loops."
+rust-version = "1.98"
+description = "Code Mode for Rust agents. The model writes a Python script that calls your tools, and ghostmode runs it in a sandbox."
 license = "MIT"
 repository = "https://github.com/legend-of-alan/ghostmode"
 readme = "README.md"
+keywords = ["agent", "llm", "code-mode", "sandbox", "python"]
+categories = ["development-tools", "asynchronous"]
+exclude = [".github", "AGENTS.md", "assets", "rust-toolchain.toml", "tests/doc_code_names.rs"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 futures-timer = "3"

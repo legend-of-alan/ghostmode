@@ -1,5 +1,5 @@
 <p align="center"><img src="assets/ghostmode-logo.png" alt="Ghost Mode: Code Mode for Rust agents."></p>
-<p align="center"><a href="https://github.com/legend-of-alan/ghostmode/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/legend-of-alan/ghostmode/ci.yml?branch=main&label=CI" alt="CI"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a> <a href="https://github.com/sponsors/legend-of-alan"><img src="https://img.shields.io/badge/sponsor-%E2%99%A5-db61a2?logo=githubsponsors" alt="Sponsor"></a></p>
+<p align="center"><a href="https://github.com/legend-of-alan/ghostmode/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/legend-of-alan/ghostmode/ci.yml?branch=main&label=CI" alt="CI"></a> <a href="https://crates.io/crates/ghostmode"><img src="https://img.shields.io/crates/v/ghostmode" alt="crates.io"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a> <a href="https://github.com/sponsors/legend-of-alan"><img src="https://img.shields.io/badge/sponsor-%E2%99%A5-db61a2?logo=githubsponsors" alt="Sponsor"></a></p>
 
 # Ghost Mode
 
@@ -41,6 +41,10 @@ Every arrow inside the caller's process is a plain Rust function call. The model
 
 ## Usage
 
+```sh
+cargo add ghostmode
+```
+
 Write a host, build a `Sandbox`, and give the model the `execute` and `poll` definitions. When the model calls `execute`, pass its code to `Sandbox::execute` and send the `Status` JSON back. If the run is still going, the model calls `poll` with the `run_id`, and you pass that to `Sandbox::poll`.
 
 The [crate docs on docs.rs](https://docs.rs/ghostmode) open with a full example: a host with one tool, and a `Sandbox` that runs one script.
@@ -68,7 +72,7 @@ The default build includes Monty. Add `--all-features` to also build `mcp::Serve
 
 ## Contributing
 
-For now, contributions are issues only. Open an issue and pick the form that fits. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how.
 
 ## License
 
