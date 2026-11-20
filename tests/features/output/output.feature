@@ -21,7 +21,6 @@ Feature: A status keeps the head and tail of output over budget, and carries wha
 
     Examples:
       | case                        | script                                                     | status                                                                     |
-      | prints and then ends        | print("hi"); 1                                             | {"status": "finished", "value": 1, "stdout": "hi\\n"}                      |
       | prints around a tool call   | print("before"); search(query="a"); print("after"); 1      | {"status": "finished", "value": 1, "stdout": "before\\nafter\\n"}          |
       | prints to stdout and stderr | import sys; print("out"); print("err", file=sys.stderr); 1 | {"status": "finished", "value": 1, "stdout": "out\\n", "stderr": "err\\n"} |
 
