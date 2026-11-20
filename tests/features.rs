@@ -47,6 +47,8 @@ struct World {
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,
     caller_error: Option<ghostmode::Error>,
+    /// The build of the builder that the last failed restore returned, not yet awaited.
+    build_after_failed_restore: Option<BoxFuture<'static, Box<dyn AnySandbox>>>,
     host_error: Option<Box<dyn std::error::Error + Send + Sync>>,
     /// How long the last [`Request`] from the test (standing in for the caller) to the
     /// `Sandbox` took to return, including time the sandbox spent waiting on the script
@@ -91,6 +93,11 @@ enum TestBackend {
     MontyPool(ghostmode::backend::MontyPool),
 }
 
+/// A sandbox restored from a dump, or the caller's error with the build of the builder that
+/// the failed restore returned.
+type Restored =
+    Result<Box<dyn AnySandbox>, (ghostmode::Error, BoxFuture<'static, Box<dyn AnySandbox>>)>;
+
 /// A sandbox over any backend, which the When steps send each [`Request`] to.
 trait AnySandbox: Send + fmt::Debug {
     /// The sandbox's [`Reply`] to `request`.
@@ -127,10 +134,7 @@ impl<B: Backend + Send + 'static> AnySandbox for Sandbox<test_host::TestHost, B>
 impl World {
     /// A new sandbox over this pass's backend, with the host, waits, limits and signing key the
     /// scenario's steps set. It holds an empty session, or the one in `dump` if there is one.
-    async fn new_sandbox(
-        &self,
-        dump: Option<&[u8]>,
-    ) -> Result<Box<dyn AnySandbox>, ghostmode::Error> {
+    async fn new_sandbox(&self, dump: Option<&[u8]>) -> Restored {
         match &self.backend {
             TestBackend::Monty => build(self.builder(Monty::default()), dump).await,
             #[cfg(feature = "monty-pool")]
@@ -193,7 +197,10 @@ impl World {
     async fn take_sandbox(&mut self) -> Box<dyn AnySandbox> {
         match self.sandbox.take() {
             Some(sandbox) => sandbox,
-            None => self.new_sandbox(None).await.expect("a new sandbox"),
+            None => match self.new_sandbox(None).await {
+                Ok(sandbox) => sandbox,
+                Err((error, _)) => panic!("a sandbox without a dump fails to build: {error:?}"),
+            },
         }
     }
 
@@ -205,11 +212,14 @@ impl World {
     }
 
     /// Replaces the scenario's sandbox with a new one restored from `bytes`, or keeps the
-    /// caller's error if restoring fails.
+    /// caller's error and the build of the builder the restore returned if restoring fails.
     async fn restore(&mut self, bytes: &[u8]) {
         match self.new_sandbox(Some(bytes)).await {
             Ok(sandbox) => self.sandbox = Some(sandbox),
-            Err(error) => self.caller_error = Some(error),
+            Err((error, build)) => {
+                self.caller_error = Some(error);
+                self.build_after_failed_restore = Some(build);
+            }
         }
     }
 }
@@ -219,9 +229,12 @@ impl World {
 async fn build<B: Backend + Send + 'static>(
     builder: Builder<test_host::TestHost, B>,
     dump: Option<&[u8]>,
-) -> Result<Box<dyn AnySandbox>, ghostmode::Error> {
+) -> Restored {
     let sandbox = match dump {
-        Some(bytes) => builder.restore(bytes).await?,
+        Some(bytes) => builder.restore(bytes).await.map_err(|(error, builder)| {
+            let build = async move { Box::new(builder.build().await) as Box<dyn AnySandbox> };
+            (error, build.boxed())
+        })?,
         None => builder.build().await,
     };
     Ok(Box::new(sandbox))

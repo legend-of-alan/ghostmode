@@ -105,8 +105,12 @@ pub struct Limits {
 
 /// What `execute` or `poll` answers, from the sandbox to the caller. It serializes as the JSON
 /// the caller sends to the model, such as `{"status": "running", "run_id": 1}`.
+///
+/// `Status` and each of its variants are `#[non_exhaustive]`, so a later release can add a
+/// status or a field without a breaking change. A `match` on it needs a `_` arm.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Status {
     /// The script ended, and this is the value of its last expression.
     #[non_exhaustive]
@@ -125,6 +129,7 @@ pub enum Status {
         restarted: bool,
     },
     /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
+    #[non_exhaustive]
     Running {
         /// The id to poll.
         run_id: u64,
@@ -618,7 +623,21 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
     /// them are [`Error::SignatureMismatch`], checked in constant time before any other byte is
     /// read. Without a key, restore trusts the bytes, so restore only bytes you made.
-    pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, Error> {
+    ///
+    /// A failed restore returns the error together with this builder, boxed, so the caller can
+    /// [`build`](Builder::build) a fresh sandbox over the same host and backend.
+    pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, (Error, Box<Self>)> {
+        match self.read_dump(bytes).await {
+            Ok((session, last_run_id, unreported_restart)) => {
+                Ok(self.build_with_session(session, last_run_id, unreported_restart))
+            }
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
+
+    /// The session that `bytes` from [`Sandbox::dump`] hold, loaded under this builder's limits,
+    /// with the dumped sandbox's last run id and whether its next status says `restarted`.
+    async fn read_dump(&self, bytes: &[u8]) -> Result<(B::Session, u64, bool), Error> {
         let dump = match self.signing_key {
             Some(key) => {
                 let (dump, tag) = bytes
@@ -645,8 +664,11 @@ impl<H: Host, B: Backend> Builder<H, B> {
             .restore(session_bytes, &self.limits)
             .await
             .map_err(Error::Restore)?;
-        let last_run_id = u64::from_le_bytes(*last_run_id_bytes);
-        Ok(self.build_with_session(session, last_run_id, *restart_byte != 0))
+        Ok((
+            session,
+            u64::from_le_bytes(*last_run_id_bytes),
+            *restart_byte != 0,
+        ))
     }
 
     /// The sandbox, with `session` as its idle Python session, `last_run_id` as the id its next

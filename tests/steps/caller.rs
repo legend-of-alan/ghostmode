@@ -95,6 +95,15 @@ async fn restore_bytes(world: &mut World, text: String) {
     world.restore(text.as_bytes()).await;
 }
 
+#[when("the caller builds the builder that the failed restore returned")]
+async fn build_after_failed_restore(world: &mut World) {
+    let build = world
+        .build_after_failed_restore
+        .take()
+        .expect("a failed restore");
+    world.sandbox = Some(build.await);
+}
+
 #[then(regex = r"^the caller's error is that run (\d+) is open$")]
 fn error_is_run_open(world: &mut World, run_id: u64) {
     let error = world.caller_error.as_ref().expect("a caller error");
