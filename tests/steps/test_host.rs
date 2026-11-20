@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, FutureExt};
@@ -130,6 +131,12 @@ fn host_description(world: &mut World, tool_id: String, description: String) {
         .entry(tool_id.clone())
         .or_insert(Answer::Value(Value::Null));
     host.descriptions.insert(tool_id, description);
+}
+
+#[given(regex = r"^a host whose `(\w+)` description is:$")]
+fn host_description_block(world: &mut World, tool_id: String, step: &Step) {
+    let description = step.docstring.as_ref().expect("a docstring").trim();
+    host_description(world, tool_id, description.to_owned());
 }
 
 #[given(regex = r"^a sandbox whose execute wait is (\d+) ms and poll wait is (\d+) ms$")]
