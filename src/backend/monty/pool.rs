@@ -132,7 +132,7 @@ impl MontyPool {
                 TurnEvent::ResolveFutures { .. } => {
                     drop(on_print);
                     let message = super::TOOLS_NOT_AWAITABLE.to_string();
-                    return Progress::Ended(self.abort(script, message, tool_ids).await);
+                    return Progress::Ended(self.abort(script, message).await);
                 }
             };
         }
@@ -213,12 +213,7 @@ impl Backend for MontyPool {
     }
 
     /// Ends the script by ending its worker, so the session loses its globals.
-    async fn abort(
-        &self,
-        suspension: Suspension,
-        message: String,
-        _tool_ids: &[String],
-    ) -> Ending<Self> {
+    async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
         let restarted = suspension.restarted;
         let (session, streams) = suspension.kill_worker();
         Ending {

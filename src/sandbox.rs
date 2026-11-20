@@ -360,11 +360,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    let ending = self
-                        .builder
-                        .backend
-                        .abort(suspension, message, &self.builder.tool_ids)
-                        .await;
+                    let ending = self.builder.backend.abort(suspension, message).await;
                     return self.end_run(ending, answered_calls);
                 }
             };
@@ -396,10 +392,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             }
             Progress::Call { suspension, .. } => {
                 let message = format!("the script reached the call limit of {call_limit}");
-                self.builder
-                    .backend
-                    .abort(suspension, message, &self.builder.tool_ids)
-                    .await
+                self.builder.backend.abort(suspension, message).await
             }
             Progress::Ended(ending) => ending,
         };

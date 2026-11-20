@@ -150,7 +150,7 @@ It has seven methods. Each returns a future that must be Send.
 - `new_session(limits)` makes an empty idle session. The session must stop a script that goes past the run time, memory or recursion depth in `limits`.
 - `feed_start(session, code, tool_ids)` runs `code` in the idle session. It returns `Progress::Call` when the script calls one of the host's tools, whose ids are `tool_ids`, and `Progress::Ended` when the script ends.
 - `resume(suspension, answer, tool_ids)` gives the host's answer to the suspended call and runs on. An Ok value becomes the call's return value. A Refused error raises PermissionError, and a Failed error raises RuntimeError.
-- `abort(suspension, message, tool_ids)` ends the suspended script with a RuntimeError that carries `message`, and returns its `Ending`. The script can't catch this error.
+- `abort(suspension, message)` ends the suspended script with a RuntimeError that carries `message`, and returns its `Ending`. The script can't catch this error.
 - `abandon(suspension)` drops the suspended script without running it further. It returns the idle session, with the globals the script set, and the `Streams` the script printed.
 - `dump(session)` returns the idle session as bytes, or an error for a session it can't write.
 - `restore(bytes, limits)` loads the bytes from `dump` as an idle session, or returns an error for bytes it can't load.
@@ -203,7 +203,7 @@ impl Backend for OneCall {
         Progress::Ended(Ending { result, streams: Streams::default(), session: (), restarted: false })
     }
 
-    async fn abort(&self, _suspension: (), message: String, _tool_ids: &[String]) -> Ending<Self> {
+    async fn abort(&self, _suspension: (), message: String) -> Ending<Self> {
         let result = Err(format!("RuntimeError: {message}"));
         Ending { result, streams: Streams::default(), session: (), restarted: false }
     }
@@ -235,7 +235,7 @@ For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `r
 
 ### Rules for a backend
 
-- **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name and TypeError for a positional argument, and it gives every OS call the no-handler answer. A tool call hands the script a plain value, so a script that awaits one gets a TypeError such as `'dict' object can't be awaited`, and the session keeps its globals.
+- **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start` and `resume`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name and TypeError for a positional argument, and it gives every OS call the no-handler answer. A tool call hands the script a plain value, so a script that awaits one gets a TypeError such as `'dict' object can't be awaited`, and the session keeps its globals.
 - **An `Ending` carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. A backend that loses the globals, as `MontyPool` does when its worker crashes, gives back an empty session and sets `restarted` on the next script's `Ending`, so that script's status says the session restarted. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
 - **`abort` ends the script.** The script can't catch the error, so `abort` returns an `Ending`, never a tool call. The `Sandbox` calls it when the script reaches `calls_per_execute` and when a call passes `call_timeout`.
 - **The backend enforces three limits.** `new_session` and `restore` get the `Limits`. The session stops a script at `run_time`, `memory_bytes` and `recursion_depth`. `run_time` counts only the script's own time, summed over the whole run, and not the time it waits on the host. The `Sandbox` enforces `calls_per_execute`, `call_timeout`, `idle_timeout` and `output_chars` itself.
