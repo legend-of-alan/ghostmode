@@ -61,19 +61,19 @@ impl sealed::Backend for Monty {
         &self,
         Session(session): Session,
         code: &str,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         let mut streams = CollectedStreams::default();
         let monty_progress =
             session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tool_ids)
+        self.run(monty_progress, streams, tools)
     }
 
     async fn resume(
         &self,
         suspension: Suspension,
         answer: Result<Value, host::Error>,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         let Suspension {
             function_call,
@@ -85,7 +85,7 @@ impl sealed::Backend for Monty {
         };
         let monty_progress =
             function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tool_ids)
+        self.run(monty_progress, streams, tools)
     }
 
     async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
@@ -132,7 +132,7 @@ impl sealed::Backend for Monty {
 }
 
 impl Monty {
-    /// Runs the script until it calls one of the host's tools, whose ids are `tool_ids`, with
+    /// Runs the script until it calls one of the host's tools, which are `tools`, with
     /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
     /// raises `NameError`, and an OS call gets Monty's no-handler answer. What the script prints
     /// is added to `streams`.
@@ -140,7 +140,7 @@ impl Monty {
         &self,
         mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
         mut streams: CollectedStreams,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         loop {
             monty_progress = match monty_progress {
@@ -161,7 +161,9 @@ impl Monty {
                     });
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call))
-                    if tool_ids.contains(&function_call.function_name) =>
+                    if tools
+                        .iter()
+                        .any(|tool| tool.id == function_call.function_name) =>
                 {
                     let tool_id = mem::take(&mut function_call.function_name);
                     match value::to_call(tool_id, &function_call.args) {

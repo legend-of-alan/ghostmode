@@ -32,9 +32,13 @@ async fn mcp_definitions_are_execute_and_poll(world: &mut World) {
 async fn openai_definitions_match_mcp_definitions(world: &mut World) {
     let tools = world.sandbox_tools().await;
     let mcp_definitions = schema::mcp_definitions(tools);
-    let functions = schema::openai_definitions(tools);
-    assert_eq!(functions.len(), mcp_definitions.len(), "{functions:?}");
-    for (function, mcp_definition) in functions.iter().zip(&mcp_definitions) {
+    let openai_definitions = schema::openai_definitions(tools);
+    assert_eq!(
+        openai_definitions.len(),
+        mcp_definitions.len(),
+        "{openai_definitions:?}"
+    );
+    for (function, mcp_definition) in openai_definitions.iter().zip(&mcp_definitions) {
         assert_eq!(
             object_keys(function),
             BTreeSet::from(["function", "type"]),

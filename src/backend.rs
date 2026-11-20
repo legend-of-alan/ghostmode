@@ -39,22 +39,22 @@ mod sealed {
         fn new_session(&self, limits: &Limits) -> impl Future<Output = Self::Session> + Send;
 
         /// Feeds `code` to the idle `session` and runs it until it calls one of the host's tools,
-        /// whose ids are `tool_ids`, or ends.
+        /// which are `tools`, or ends.
         fn feed_start(
             &self,
             session: Self::Session,
             code: &str,
-            tool_ids: &[String],
+            tools: &[host::Tool],
         ) -> impl Future<Output = Progress<Self>> + Send;
 
         /// Answers the tool call the script is suspended at with `answer`, and runs on until the
-        /// next call to one of `tool_ids`, or the end. A [`host::Error::Refused`] raises
+        /// next call to one of `tools`, or the end. A [`host::Error::Refused`] raises
         /// `PermissionError` in the script, and a [`host::Error::Failed`] raises `RuntimeError`.
         fn resume(
             &self,
             suspension: Self::Suspension,
             answer: Result<Value, host::Error>,
-            tool_ids: &[String],
+            tools: &[host::Tool],
         ) -> impl Future<Output = Progress<Self>> + Send;
 
         /// Ends the suspended script with a `RuntimeError` carrying `message`, which the script

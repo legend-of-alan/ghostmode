@@ -122,7 +122,7 @@ For a host that does real I/O, see `mcp::Server` in `src/mcp.rs`. It clones what
 
 - **The future owns its data.** `call` returns a `'static` future, so it can't borrow `self` or `call`. Clone what the future needs before you build it, as `mcp::Server` clones its rmcp peer.
 - **The future may be dropped.** The `Sandbox` drops the future when the call passes `call_timeout`, when the caller calls `Sandbox::cancel` or `Sandbox::reset`, and when the run passes `idle_timeout`. Don't rely on the future running to the end.
-- **The tool list is read once.** `Builder::new` calls `tools` once, `Sandbox::tools` returns that list, and the `Sandbox` hands the tool ids to the backend. A tool that `tools` adds later is not callable in that `Sandbox`, so build a new one.
+- **The tool list is read once.** `Builder::new` calls `tools` once, `Sandbox::tools` returns that list, and the `Sandbox` hands that list to the backend. A tool that `tools` adds later is not callable in that `Sandbox`, so build a new one.
 - **Arguments are keywords.** Monty raises TypeError for a positional argument before the call reaches the host, so `call.args` holds every argument.
 - **Keys come sorted.** Objects in `call.args`, the host's answers and the script's results come with their keys sorted. To keep insertion order, turn on serde_json's `preserve_order` feature in your own `Cargo.toml`.
 - **Answer every call.** Use Refused for a call the host won't run, such as one without permission. Use Failed for a call that ran and went wrong. Answer an unknown `tool_id` with Failed, as `mcp::Server` does.

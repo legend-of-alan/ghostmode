@@ -255,7 +255,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             let progress = self
                 .builder
                 .backend
-                .feed_start(session, code, &self.builder.tool_ids())
+                .feed_start(session, code, &self.builder.tools)
                 .await;
             if let Some(status) = self.suspend_or_end(Vec::new(), progress).await {
                 return status;
@@ -393,7 +393,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                     Span::current().record("call_count", answered_calls.len());
                     self.builder
                         .backend
-                        .resume(suspension, answer, &self.builder.tool_ids())
+                        .resume(suspension, answer, &self.builder.tools)
                         .await
                 }
                 None => {
@@ -559,7 +559,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
 impl<H: Host, B: Backend> Builder<H, B> {
     /// A builder for a sandbox whose scripts call `host`'s tools and run in `backend`. It reads
     /// the host's tool list here, once: a tool the host lists later is not callable in the
-    /// sandbox, and the backend gets the tool ids on every call that runs a script.
+    /// sandbox, and the backend gets the tools on every call that runs a script.
     pub fn new(host: H, backend: B) -> Self {
         let tools = host.tools();
         Self {
@@ -664,11 +664,6 @@ impl<H: Host, B: Backend> Builder<H, B> {
             last_run_id,
             unreported_restart,
         }
-    }
-
-    /// The id of each tool the host listed.
-    fn tool_ids(&self) -> Vec<String> {
-        self.tools.iter().map(|tool| tool.id.clone()).collect()
     }
 }
 

@@ -140,14 +140,14 @@ impl MontyPool {
         }
     }
 
-    /// Runs the script on from `turn` until it calls one of the host's tools, whose ids are
-    /// `tool_ids`, with keyword arguments, or ends. Every other suspension is answered here as
+    /// Runs the script on from `turn` until it calls one of the host's tools, which are
+    /// `tools`, with keyword arguments, or ends. Every other suspension is answered here as
     /// `backend::Monty` answers it. What the script prints is added to the suspension's streams.
     async fn run(
         &self,
         mut script: Suspension,
         mut turn: Result<TurnEvent, PoolError>,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         loop {
             let event = match turn {
@@ -165,7 +165,7 @@ impl MontyPool {
                     function_name,
                     args,
                     ..
-                } if tool_ids.contains(&function_name) => {
+                } if tools.iter().any(|tool| tool.id == function_name) => {
                     match value::to_call(function_name, &args) {
                         Ok(call) => {
                             drop(on_print);
@@ -215,7 +215,7 @@ impl sealed::Backend for MontyPool {
         &self,
         session: Session,
         code: &str,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         let Session { config, checkout } = session;
         let mut checkout = match self.take_worker(checkout, &config).await {
@@ -247,14 +247,14 @@ impl sealed::Backend for MontyPool {
             checkout,
             streams,
         };
-        self.run(script, turn, tool_ids).await
+        self.run(script, turn, tools).await
     }
 
     async fn resume(
         &self,
         mut suspension: Suspension,
         answer: Result<Value, host::Error>,
-        tool_ids: &[String],
+        tools: &[host::Tool],
     ) -> Progress<Self> {
         let answer = match answer {
             Ok(answer) => ResumeValue::Return(value::from_json(answer)),
@@ -263,7 +263,7 @@ impl sealed::Backend for MontyPool {
         let mut on_print = print_into(&mut suspension.streams);
         let turn = suspension.checkout.resume(answer, &mut on_print).await;
         drop(on_print);
-        self.run(suspension, turn, tool_ids).await
+        self.run(suspension, turn, tools).await
     }
 
     /// Ends the script by ending its worker, so the session loses its globals.
