@@ -81,7 +81,8 @@ pub enum Error {
         /// The two tools' MCP ids.
         mcp_ids: [String; 2],
     },
-    /// An MCP tool's id isn't a Python identifier, so a script can't call it.
+    /// An MCP tool's id isn't a Python identifier, or is a Python keyword or builtin's name, so a
+    /// script can't call it.
     UncallableId {
         /// The tool's id, which is also its MCP id.
         tool_id: String,

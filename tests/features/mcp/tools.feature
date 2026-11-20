@@ -41,4 +41,5 @@ Feature: An MCP client offers its server's tools to scripts
     Examples:
       | mcp_id |
       | class  |
+      | print  |
       |        |

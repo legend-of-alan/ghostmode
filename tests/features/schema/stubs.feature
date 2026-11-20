@@ -44,7 +44,21 @@ Feature: The execute description lists each host tool as a typed Python stub
     Given a host whose `find` description is "Finds a\b or """x""""
     Then the execute description contains """"Finds a\\b or \"\"\"x\"\"\"""""
 
-  Scenario Outline: A tool whose id isn't a Python identifier gets no stub
+  Scenario: A tool with an argument that isn't a Python name takes **kwargs, listed in its docstring
+    Given a host whose `lookup` input schema is {"type": "object", "properties": {"user-id": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["user-id"]}
+    And a host whose `lookup` description is "Looks up a user."
+    Then the execute description contains:
+      ```
+      def lookup(**kwargs: Any) -> Any:
+          """Looks up a user.
+          Keyword arguments:
+          user-id: str
+          limit: int | None = None"""
+      ```
+    When the model executes lookup(**{"user-id": "42"}); raise ValueError("no")
+    Then the failed status lists the calls [{"tool_id": "lookup", "args": {"user-id": "42"}}]
+
+  Scenario Outline: A tool whose id a script can't call gets no stub
     Given a host whose `<id>` answers {}
     And a host whose `ping` answers {}
     Then the execute description contains "def ping() -> Any:"
@@ -55,3 +69,6 @@ Feature: The execute description lists each host tool as a typed Python stub
       | get-room |
       | class    |
       | 1st      |
+      | print    |
+      | len      |
+      | open     |
