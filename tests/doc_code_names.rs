@@ -1,6 +1,6 @@
 //! Every code name that `AGENTS.md`, `README.md` and `docs/*.md` write in backticks is real: a
 //! `path/to/file.rs` names a file in the repository, and each part of a `module::Item` path or
-//! a CamelCase `Type` is declared in a `.rs` file or `Cargo.toml`, as an item, a `pub` field or
+//! a CamelCase `Type` is declared in a `src/` file or `Cargo.toml`, as an item, a `pub` field or
 //! an enum variant. A path that starts with one of the `STD_TYPES` is left to std. Plain words in
 //! backticks stay prose.
 
@@ -58,7 +58,7 @@ fn fields_variants_and_std_paths_are_real_but_typos_are_not() {
     ] {
         assert_eq!(describe_missing(code, &paths, &declared), None, "`{code}`");
     }
-    for code in ["Limits::run_tim", "Sandbx::builder"] {
+    for code in ["Limits::run_tim", "Sandbx::builder", "TestBackend"] {
         assert!(
             describe_missing(code, &paths, &declared).is_some(),
             "`{code}`"
@@ -66,7 +66,8 @@ fn fields_variants_and_std_paths_are_real_but_typos_are_not() {
     }
 }
 
-/// The path of every source file under `root`, and every name those files declare.
+/// The path of every source file under `root`, and every name the crate and `Cargo.toml` declare.
+/// Test files give their paths only, so a doc cannot name code that only a test declares.
 fn collect_paths_and_names(root: &Path) -> (Vec<String>, HashSet<String>) {
     let mut sources = vec![root.join("Cargo.toml")];
     for dir in ["src", "tests"] {
@@ -76,6 +77,9 @@ fn collect_paths_and_names(root: &Path) -> (Vec<String>, HashSet<String>) {
     let mut declared = HashSet::new();
     for path in &sources {
         paths.push(path.to_string_lossy().replace('\\', "/"));
+        if path.starts_with(root.join("tests")) {
+            continue;
+        }
         declared.extend(
             path.strip_prefix(root)
                 .expect("source under the root")
