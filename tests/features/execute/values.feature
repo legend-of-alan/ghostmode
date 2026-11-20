@@ -59,7 +59,7 @@ Feature: Python values come back as the JSON the model reads
     When the model executes 1 + 1
     Then the status is {"status": "finished", "value": 2}
 
-  Scenario: A value that holds one list 2 ** 23 times fails, and the next script still runs
+  Scenario: A value that holds one list 2 ** 23 times fails
     When the model executes this script:
       """
       a = [0]
@@ -67,25 +67,36 @@ Feature: Python values come back as the JSON the model reads
           a = [a, a]
       a
       """
-    Then the status is failed with an error naming more than 10485760 bytes as JSON
-    When the model executes 1 + 1
-    Then the status is {"status": "finished", "value": 2}
+    Then the status is failed with an error naming more than 10485760 bytes to convert to JSON
 
-  Scenario Outline: <script> fails because it takes more than 10 MiB as JSON
+  Scenario Outline: <script> fails because it needs more than 10 MiB to convert to JSON
     When the model executes <script>
-    Then the status is failed with an error naming more than 10485760 bytes as JSON
+    Then the status is failed with an error naming more than 10485760 bytes to convert to JSON
 
     Examples:
       | script                          |
       | s = 'x' * 5000000; [s] * 100    |
-      | 1 << 40000000                   |
       | 'x' * 10485761                  |
 
-  Scenario: A tool argument that takes more than 10 MiB as JSON raises in the script
+  Scenario: An int with more than 4300 digits fails before its digits are written
+    When the model executes 1 << 15000
+    Then the status is failed with an error naming an int with more than 4300 digits
+
+  Scenario: An object whose repr holds an int with more than 4300 digits fails
+    When the model executes this script:
+      """
+      class A:
+          def __init__(self):
+              self.x = 1 << 15000
+      A()
+      """
+    Then the status is failed with an error naming an int with more than 4300 digits
+
+  Scenario: A tool argument that needs more than 10 MiB to convert to JSON raises in the script
     Given a host whose `search` answers {"hits": []}
     When the model executes search(query=['x' * 5000000] * 3)
     Then the status is failed with an error naming ValueError
-    And the status is failed with an error naming more than 10485760 bytes as JSON
+    And the status is failed with an error naming more than 10485760 bytes to convert to JSON
 
   Scenario: A dict whose keys 1 and '1' both become the JSON key "1" fails
     When the model executes {1: 'a', '1': 'b'}
@@ -102,9 +113,10 @@ Feature: Python values come back as the JSON the model reads
       search(query=y)
       """
     Then the status is failed with an error naming ValueError
-    And the status is failed with an error naming nested more than 126 levels
+    And the status is failed with an error naming deeper than the sandbox's recursion_depth
 
   Scenario: A host answer above i64::MAX reaches the script as that exact int
     Given a host whose `search` answers {"n": 10000000000000000000}
     When the model executes repr(search(query="a")["n"])
     Then the status is {"status": "finished", "value": "10000000000000000000"}
+

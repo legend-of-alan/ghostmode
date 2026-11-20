@@ -3,9 +3,11 @@
 //!
 //! Containers become arrays or objects, an `int` too big for 64 bits becomes its digit string,
 //! and any other value, such as a float JSON can't hold, becomes its `repr`. A value fails with
-//! a plain error when it is nested more than [`MAX_VALUE_DEPTH`] levels, when it takes more
-//! than [`MAX_JSON_BYTES`] bytes as JSON, or when two of a dict's keys become the same JSON key.
+//! a plain error when it is nested more than [`MAX_VALUE_DEPTH`] levels, when it needs more
+//! than [`MAX_JSON_BYTES`] bytes to convert, when it holds an int with more than
+//! [`MAX_INT_DIGITS`] digits, or when two of a dict's keys become the same JSON key.
 
+use std::collections::HashSet;
 use std::fmt::{self, Write};
 
 use monty_types::unstable::{self, MontyGraph, MontyNode, NodeId, PushValue};
@@ -25,6 +27,10 @@ const MAX_VALUE_DEPTH: usize = 126;
 /// plus the text of each string, key and `repr`. It is the same cap a script's prints get.
 /// An object the value holds several times counts each time.
 const MAX_JSON_BYTES: usize = DEFAULT_MAX_PRINT_COLLECT_BYTES;
+
+/// The most digits an int may have when it becomes text, CPython's default int-to-str limit
+/// (`sys.get_int_max_str_digits()`).
+const MAX_INT_DIGITS: u64 = 4300;
 
 /// The host call a script made to the tool `tool_id` with `args`, or the `TypeError` the script
 /// raises when `args` hold a positional argument, or the `ValueError` it raises when the
@@ -73,19 +79,23 @@ pub(crate) fn from_answer(
 }
 
 /// The JSON the model reads for a Python value, or an error if the value is nested more than
-/// [`MAX_VALUE_DEPTH`] levels, it takes more than [`MAX_JSON_BYTES`] bytes as JSON, or two of
-/// a dict's keys become the same JSON key.
+/// [`MAX_VALUE_DEPTH`] levels, needs more than [`MAX_JSON_BYTES`] bytes to convert, holds an
+/// int with more than [`MAX_INT_DIGITS`] digits, or two of its dicts' keys become the same JSON
+/// key.
 pub(crate) fn to_json(value: ObjectRef<'_>) -> Result<Value, String> {
     let mut budget = MAX_JSON_BYTES;
     to_json_at(value, 0, &mut budget)
 }
 
 fn too_deep_message() -> String {
-    format!("the value is nested more than {MAX_VALUE_DEPTH} levels")
+    format!(
+        "the value is nested more than {MAX_VALUE_DEPTH} levels, or deeper than the sandbox's \
+         recursion_depth"
+    )
 }
 
 fn too_big_message() -> String {
-    format!("the value takes more than {MAX_JSON_BYTES} bytes as JSON")
+    format!("the value needs more than {MAX_JSON_BYTES} bytes to convert to JSON")
 }
 
 /// Takes `bytes` from what is left of `budget`, or fails once it runs out.
@@ -109,14 +119,41 @@ impl Write for BudgetWriter<'_> {
     }
 }
 
-/// The `repr` of `value`, taken from what is left of `budget`, or an error once it runs out.
+/// The `repr` of `value`, taken from what is left of `budget`, or an error once it runs out or
+/// if `value` holds an int with more than [`MAX_INT_DIGITS`] digits.
 fn format_repr(value: ObjectRef<'_>, budget: &mut usize) -> Result<String, String> {
+    if holds_int_past_digit_limit(value) {
+        return Err(format!(
+            "the value holds an int with more than {MAX_INT_DIGITS} digits"
+        ));
+    }
     let mut repr = BudgetWriter {
         text: String::new(),
         budget,
     };
     write!(repr, "{value}").map_err(|_| too_big_message())?;
     Ok(repr.text)
+}
+
+/// Whether `value`, or anything it holds, is an int with more than [`MAX_INT_DIGITS`] digits.
+/// Each object is checked once, however many times `value` holds it.
+fn holds_int_past_digit_limit(value: ObjectRef<'_>) -> bool {
+    let mut seen = HashSet::new();
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        let node = unstable::node(value);
+        if let MontyNode::BigInt(int) = node
+            && int.bits() * 3 / 10 > MAX_INT_DIGITS
+        {
+            return true;
+        }
+        node.for_each_child(|id| {
+            if seen.insert(id) {
+                stack.push(unstable::child(value, id));
+            }
+        });
+    }
+    false
 }
 
 /// Drops a JSON value by walking it on the heap, so a value nested more than
@@ -163,9 +200,6 @@ fn to_json_at(value: ObjectRef<'_>, depth: usize, budget: &mut usize) -> Result<
         MontyNode::String(text) | MontyNode::Repr(text) => {
             spend(budget, text.len())?;
             Value::String(text.clone())
-        }
-        MontyNode::BigInt(int) if int.bits() * 3 / 10 > *budget as u64 => {
-            return Err(too_big_message());
         }
         MontyNode::None => Value::Null,
         MontyNode::Bool(value) => Value::Bool(*value),
