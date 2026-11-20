@@ -52,9 +52,13 @@ pub struct Builder<H, B> {
 /// How many bytes the HMAC-SHA256 tag takes that a signing key appends to a dump.
 const TAG_BYTES: usize = 32;
 
-/// How many bytes the header takes that starts a dump: one byte for whether the session owes the
-/// model a `restarted` status, then the last run id as 8 little-endian bytes.
-const HEADER_BYTES: usize = 9;
+/// The format version that starts every dump. [`Builder::restore`] refuses any other version.
+const DUMP_FORMAT_VERSION: u8 = 1;
+
+/// How many bytes the header takes that starts a dump: the [format version](DUMP_FORMAT_VERSION),
+/// one byte for whether the session owes the model a `restarted` status, then the last run id as
+/// 8 little-endian bytes.
+const HEADER_BYTES: usize = 10;
 
 /// What a script may use before the sandbox stops it with a `failed` status. A stopped script
 /// leaves the session's globals as it had set them, unless the backend lost them, which the next
@@ -161,8 +165,8 @@ pub enum Error {
     },
     /// The backend can't write the session as bytes, for this reason.
     Dump(Box<dyn error::Error + Send + Sync>),
-    /// The bytes are too short to be a dump, or the backend can't load them as a session, for
-    /// this reason.
+    /// The bytes are too short to be a dump, start with another format version, or the backend
+    /// can't load them as a session, for this reason.
     Restore(Box<dyn error::Error + Send + Sync>),
     /// The bytes don't end in the tag that the builder's signing key makes for them: the key
     /// didn't sign them, or they changed since.
@@ -307,7 +311,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let (dump, lost_globals) = self.builder.backend.dump(&mut session).await;
         self.state = Some(State::Idle(session));
         self.unreported_restart |= lost_globals;
-        let mut bytes = vec![u8::from(self.unreported_restart)];
+        let mut bytes = vec![DUMP_FORMAT_VERSION, u8::from(self.unreported_restart)];
         bytes.extend(self.last_run_id.to_le_bytes());
         bytes.extend(dump.map_err(Error::Dump)?);
         if let Some(key) = self.builder.signing_key {
@@ -601,7 +605,8 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
     /// this builder's limits. Its run ids go on from the dumped sandbox's last one, and its next
     /// finished or failed status says `restarted` if the dumped sandbox's would have. Bytes too
-    /// short to be a dump, or that the backend can't load, are [`Error::Restore`].
+    /// short to be a dump, that start with another format version, or that the backend can't
+    /// load, are [`Error::Restore`].
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
     /// them are [`Error::SignatureMismatch`], checked in constant time before any other byte is
@@ -619,9 +624,15 @@ impl<H: Host, B: Backend> Builder<H, B> {
             }
             None => bytes,
         };
-        let ([restart_byte, last_run_id_bytes @ ..], session_bytes) = dump
+        let ([version, restart_byte, last_run_id_bytes @ ..], session_bytes) = dump
             .split_first_chunk::<HEADER_BYTES>()
             .ok_or_else(|| Error::Restore("the bytes are too short to be a dump".into()))?;
+        if *version != DUMP_FORMAT_VERSION {
+            return Err(Error::Restore(
+                format!("the dump is format version {version}, not version {DUMP_FORMAT_VERSION}")
+                    .into(),
+            ));
+        }
         let session = self
             .backend
             .restore(session_bytes, &self.limits)

@@ -43,11 +43,19 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
     And the model executes search(query="a")
     Then the status is {"status": "running", "run_id": 2}
 
-  Scenario Outline: Restoring the bytes "<bytes>", which are not a dump, fails with a restore error
-    When the caller restores the bytes "<bytes>" into a new sandbox
+  Scenario Outline: Restoring <bytes>, which are not a dump, fails with a restore error
+    When the model executes x = 7
+    And the caller dumps the sandbox
+    And the caller restores <bytes> into a new sandbox
     Then the caller's error is that the bytes don't restore
 
     Examples:
-      | bytes      |
-      | not a dump |
-      | short      |
+      | bytes                      |
+      | the bytes "short"          |
+      | the dump cut to its header |
+
+  Scenario: Restoring a dump of another format version fails with a restore error naming both versions
+    When the model executes x = 7
+    And the caller dumps the sandbox
+    And the caller restores the dump with its first byte flipped into a new sandbox
+    Then the caller's error is that the dump is format version 0, not version 1
