@@ -38,9 +38,9 @@ use crate::sandbox::Limits;
 /// use ghostmode::backend::{MontyPool, WorkerOptions};
 ///
 /// # async fn build() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// let mut workers = WorkerOptions::new("/usr/local/bin/monty");
-/// workers.min_workers = 0;
-/// let backend = MontyPool::new(workers).await?;
+/// let mut options = WorkerOptions::new("/usr/local/bin/monty");
+/// options.min_workers = 0;
+/// let backend = MontyPool::new(options).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -95,13 +95,13 @@ impl WorkerOptions {
 }
 
 impl MontyPool {
-    /// A backend whose sessions each check out one of the workers that `workers` describe. It
+    /// A backend whose sessions each check out one of the workers that `options` describe. It
     /// starts [`WorkerOptions::min_workers`] workers before it returns, and fails if
     /// `min_workers` is more than the pool allows, which is one per CPU core.
-    pub async fn new(workers: WorkerOptions) -> Result<Self, Box<dyn error::Error + Send + Sync>> {
+    pub async fn new(options: WorkerOptions) -> Result<Self, Box<dyn error::Error + Send + Sync>> {
         let config = PoolConfig {
-            min_processes: workers.min_workers,
-            ..PoolConfig::subprocess(workers.binary_path)
+            min_processes: options.min_workers,
+            ..PoolConfig::subprocess(options.binary_path)
         };
         Ok(Self(Arc::new(Pool::new(config).await?)))
     }

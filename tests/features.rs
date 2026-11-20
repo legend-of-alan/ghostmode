@@ -276,9 +276,9 @@ fn main() {
     {
         println!("executor: Tokio multi-thread runtime, against monty-pool workers");
         failed |= runtime.block_on(async {
-            let mut workers = ghostmode::backend::WorkerOptions::new(find_worker_binary());
-            workers.min_workers = 0;
-            let pool = ghostmode::backend::MontyPool::new(workers)
+            let mut options = ghostmode::backend::WorkerOptions::new(find_worker_binary());
+            options.min_workers = 0;
+            let pool = ghostmode::backend::MontyPool::new(options)
                 .await
                 .expect("monty-pool takes the `monty` worker's options");
             run_scenarios(true, TestBackend::MontyPool(pool)).await
