@@ -70,12 +70,14 @@ impl Host for Echo {
     }
 }
 
-let host = Echo;
-let definitions = schema::list_mcp_tools(&host.tools());
-let mut sandbox = Sandbox::builder(host).build().await;
-// Hand `definitions` to the model. When it calls execute, run the code and send the Status JSON back.
-let status = sandbox.execute("echo(text='hello')", false).await;
-let reply = serde_json::to_value(&status).unwrap();
+async fn execute_echo() {
+    let host = Echo;
+    let definitions = schema::list_mcp_tools(&host.tools());
+    let mut sandbox = Sandbox::builder(host).build().await;
+    // Hand `definitions` to the model. When it calls execute, run the code and send the Status JSON back.
+    let status = sandbox.execute("echo(text='hello')", false).await;
+    let reply = serde_json::to_value(&status).unwrap();
+}
 ```
 
 `schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.

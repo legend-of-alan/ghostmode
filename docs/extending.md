@@ -118,9 +118,11 @@ impl Host for Notes {
     }
 }
 
-let host = Notes { notes: Arc::default(), read_only: false };
-let mut sandbox = Sandbox::builder(host).build().await;
-let status = sandbox.execute("add_note(text='hi')\nlist_notes()", false).await;
+async fn add_and_list_notes() {
+    let host = Notes { notes: Arc::default(), read_only: false };
+    let mut sandbox = Sandbox::builder(host).build().await;
+    let status = sandbox.execute("add_note(text='hi')\nlist_notes()", false).await;
+}
 ```
 
 The `status` serializes as `{"status": "finished", "value": ["hi"]}`.
@@ -160,14 +162,13 @@ Every `Progress` is one of two variants:
 - `Progress::Call` carries the `host::Call` and the `Suspension`. The `Sandbox` sends the call to the host and passes the answer to `resume`.
 - `Progress::Ended` carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the backend lost the session's globals during the run, `lost_globals`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
 
-The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`. The snippet runs it with the notes host from above.
+The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`. The snippet runs it with any host, such as the notes host from above.
 
 ```rust
 use std::error;
-use std::sync::Arc;
 
 use ghostmode::backend::{Backend, Ending, Progress, Streams};
-use ghostmode::host::{self, Call};
+use ghostmode::host::{self, Call, Host};
 use ghostmode::{Builder, Limits};
 use serde_json::{Map, Value};
 
@@ -225,8 +226,9 @@ impl Backend for OneCall {
     }
 }
 
-let host = Notes { notes: Arc::default(), read_only: false };
-let mut sandbox = Builder::new(host, OneCall).build().await;
+async fn build_one_call_sandbox(host: impl Host) {
+    let mut sandbox = Builder::new(host, OneCall).build().await;
+}
 ```
 
 `Sandbox::builder` only builds a `Sandbox` with `Monty`. For your own backend, use `Builder::new` with the host and the backend. The other `Builder` settings work the same.
