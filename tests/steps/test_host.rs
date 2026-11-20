@@ -18,6 +18,8 @@ pub(crate) enum Answer {
     Failed(String),
     /// Answers once a When step sends the answer through `TestHost::held_calls`.
     Held,
+    /// A list nested `depth` levels, built when the script calls the tool.
+    NestedList(usize),
 }
 
 /// A host whose tools answer as the scenario's Given steps set up.
@@ -72,6 +74,13 @@ impl Host for TestHost {
             Answer::Value(value) => future::ready(Ok(value)).boxed(),
             Answer::Refused(reason) => future::ready(Err(host::Error::Refused(reason))).boxed(),
             Answer::Failed(message) => future::ready(Err(host::Error::Failed(message))).boxed(),
+            Answer::NestedList(depth) => {
+                let mut value = Value::from(1);
+                for _ in 0..depth {
+                    value = Value::Array(vec![value]);
+                }
+                future::ready(Ok(value)).boxed()
+            }
             Answer::Held => {
                 let (sender, receiver) = oneshot::channel();
                 let held_calls = &mut self.held_calls.lock().expect("held calls");
@@ -87,6 +96,14 @@ impl Host for TestHost {
 /// The JSON a step wrote.
 pub(crate) fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|err| panic!("{text} is not JSON: {err}"))
+}
+
+#[given(regex = r"^a host whose `([^`]+)` answers a list nested (\d+) levels$")]
+fn host_answers_nested_list(world: &mut World, tool_id: String, depth: usize) {
+    world
+        .host
+        .answers
+        .insert(tool_id, Answer::NestedList(depth));
 }
 
 #[given(regex = r#"^a host whose `([^`]+)` answers ([\[{"].*)$"#)]

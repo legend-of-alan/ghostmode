@@ -25,12 +25,13 @@ rmcp = { version = "3.11", default-features = false, features = ["client"], opti
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
+stacker = { version = "0.1", optional = true }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [features]
 default = ["monty"]
 # Runs scripts in Monty inside the caller's process, as `backend::Monty`.
-monty = ["dep:monty", "dep:monty-types"]
+monty = ["dep:monty", "dep:monty-types", "dep:stacker"]
 # Runs each session's scripts in a Monty worker process from a monty-pool `Pool`, as
 # `backend::MontyPool`.
 monty-pool = ["dep:monty-pool", "dep:monty-types"]

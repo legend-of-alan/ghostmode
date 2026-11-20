@@ -63,10 +63,12 @@ impl sealed::Backend for Monty {
         code: &str,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        let mut streams = CollectedStreams::default();
-        let monty_progress =
-            session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tools)
+        run_on_script_stack(|| {
+            let mut streams = CollectedStreams::default();
+            let monty_progress =
+                session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
+            self.run(monty_progress, streams, tools)
+        })
     }
 
     async fn resume(
@@ -75,30 +77,34 @@ impl sealed::Backend for Monty {
         answer: Result<Value, host::Error>,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let answer = match answer {
-            Ok(answer) => ExtFunctionResult::Return(value::from_json(answer)),
-            Err(error) => ExtFunctionResult::Error(value::to_exception(error)),
-        };
-        let monty_progress =
-            function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tools)
+        run_on_script_stack(|| {
+            let Suspension {
+                function_call,
+                mut streams,
+            } = suspension;
+            let answer = value::from_answer(answer)
+                .map(ExtFunctionResult::Return)
+                .unwrap_or_else(ExtFunctionResult::Error);
+            let monty_progress =
+                function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
+            self.run(monty_progress, streams, tools)
+        })
     }
 
     async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let error = MontyException::runtime_error(message);
-        let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        match self.run(monty_progress, streams, &[]) {
-            Progress::Ended(ending) => ending,
-            Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
-        }
+        run_on_script_stack(|| {
+            let Suspension {
+                function_call,
+                mut streams,
+            } = suspension;
+            let error = MontyException::runtime_error(message);
+            let monty_progress =
+                function_call.abort(error, PrintWriter::collect_streams(&mut streams));
+            match self.run(monty_progress, streams, &[]) {
+                Progress::Ended(ending) => ending,
+                Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
+            }
+        })
     }
 
     async fn abandon(&self, suspension: Suspension, message: String) -> Ending<Self> {
@@ -131,6 +137,19 @@ impl sealed::Backend for Monty {
     }
 }
 
+/// How many bytes of stack in-process Monty uses to run a script and export its
+/// result, when the thread that polls `execute` or `poll` has less than this
+/// many bytes left.
+const SCRIPT_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+/// Runs `f` on at least [`SCRIPT_STACK_BYTES`] of stack.
+fn run_on_script_stack<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    stacker::maybe_grow(SCRIPT_STACK_BYTES, SCRIPT_STACK_BYTES, f)
+}
+
 impl Monty {
     /// Runs the script until it calls one of the host's tools, which are `tools`, with
     /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
@@ -154,7 +173,7 @@ impl Monty {
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
                     return Progress::Ended(Ending {
-                        result: Ok(value::to_json(value.as_ref())),
+                        result: value::to_json(value.as_ref()),
                         streams: split_streams(streams),
                         session: Session(Box::new(repl)),
                         lost_globals: false,
