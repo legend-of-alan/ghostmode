@@ -28,6 +28,8 @@ pub struct Sandbox<H, B: Backend> {
 }
 
 /// Sets up a [`Sandbox`]. Made by `Sandbox::builder` (with the `monty` feature) or [`Builder::new`].
+/// The built sandbox keeps its builder and runs with its host, backend, waits, limits and signing
+/// key.
 pub struct Builder<H, B> {
     host: H,
     tool_ids: Vec<String>,
