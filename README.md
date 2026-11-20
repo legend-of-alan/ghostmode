@@ -49,7 +49,7 @@ Write a host, build a `Sandbox`, and give the model the `execute` and `poll` def
 
 The [crate docs on docs.rs](https://docs.rs/ghostmode) open with a full example: a host with one tool, and a `Sandbox` that runs one script.
 
-`schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Builder::new` instead of writing your own host.
+Pass `Sandbox::tools` to `schema::mcp_definitions` for the pair in MCP shape, or to `schema::openai_definitions` for OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Builder::new` instead of writing your own host.
 
 `Monty`, from the `monty` feature that is on by default, runs the script inside your process and isn't crash-isolated. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`, which runs each session in its own worker process. On Tokio, read [Where scripts run](docs/extending.md#where-scripts-run) first.
 

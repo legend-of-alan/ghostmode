@@ -26,7 +26,7 @@ pub trait Host {
 pub struct Tool {
     /// The id a script calls the tool by, as a Python function. It must be a Python identifier
     /// that isn't a keyword, as [`crate::schema::is_python_identifier`] checks.
-    /// [`crate::schema::list_mcp_tools`] leaves out any tool whose id isn't one.
+    /// [`crate::schema::mcp_definitions`] leaves out any tool whose id isn't one.
     pub id: String,
     /// What the tool does, for the model.
     pub description: String,

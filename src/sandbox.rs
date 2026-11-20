@@ -14,7 +14,7 @@ use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::backend::{Backend, Ending, Progress, Streams};
-use crate::host::{self, Host};
+use crate::host::{self, Host, Tool};
 
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
@@ -41,7 +41,7 @@ pub struct Sandbox<H, B: Backend> {
 /// output never shows the signing key.
 pub struct Builder<H, B> {
     host: H,
-    tool_ids: Vec<String>,
+    tools: Vec<Tool>,
     backend: B,
     execute_wait: Duration,
     poll_wait: Duration,
@@ -222,6 +222,13 @@ macro_rules! trace_step {
 }
 
 impl<H: Host, B: Backend> Sandbox<H, B> {
+    /// The tools that [`Builder::new`] read from the host, which are the tools scripts call.
+    /// Pass them to [`crate::schema::mcp_definitions`] or [`crate::schema::openai_definitions`]
+    /// for the definitions the model sees.
+    pub fn tools(&self) -> &[Tool] {
+        &self.builder.tools
+    }
+
     /// Runs `code`, waiting up to the execute wait for its tool calls. A script that fails is a
     /// `failed` status, as is a request while another run is still running. If a run waited
     /// past its idle timeout with no answer from the host, it expires and `execute` answers its
@@ -248,7 +255,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             let progress = self
                 .builder
                 .backend
-                .feed_start(session, code, &self.builder.tool_ids)
+                .feed_start(session, code, &self.builder.tools)
                 .await;
             if let Some(status) = self.suspend_or_end(Vec::new(), progress).await {
                 return status;
@@ -386,7 +393,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                     Span::current().record("call_count", answered_calls.len());
                     self.builder
                         .backend
-                        .resume(suspension, answer, &self.builder.tool_ids)
+                        .resume(suspension, answer, &self.builder.tools)
                         .await
                 }
                 None => {
@@ -552,12 +559,12 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
 impl<H: Host, B: Backend> Builder<H, B> {
     /// A builder for a sandbox whose scripts call `host`'s tools and run in `backend`. It reads
     /// the host's tool list here, once: a tool the host lists later is not callable in the
-    /// sandbox, and the backend gets the tool ids on every call that runs a script.
+    /// sandbox, and the backend gets the tools on every call that runs a script.
     pub fn new(host: H, backend: B) -> Self {
-        let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
+        let tools = host.tools();
         Self {
             host,
-            tool_ids,
+            tools,
             backend,
             execute_wait: Duration::from_secs(30),
             poll_wait: Duration::from_secs(10),
@@ -672,7 +679,7 @@ impl<H, B: Backend> fmt::Debug for Sandbox<H, B> {
 impl<H, B> fmt::Debug for Builder<H, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Builder")
-            .field("tool_ids", &self.tool_ids)
+            .field("tools", &self.tools)
             .field("execute_wait", &self.execute_wait)
             .field("poll_wait", &self.poll_wait)
             .field("limits", &self.limits)
