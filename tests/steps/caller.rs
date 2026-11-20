@@ -107,3 +107,12 @@ fn error_is_signature_mismatch(world: &mut World) {
         "{error:?}"
     );
 }
+
+#[then("the sandbox's Debug output doesn't show the signing key")]
+fn debug_hides_signing_key(world: &mut World) {
+    let key = world.signing_key.expect("a signing key");
+    let sandbox = world.sandbox.as_ref().expect("a sandbox");
+    let output = format!("{sandbox:?}");
+    assert!(output.starts_with("Sandbox"), "{output}");
+    assert!(!output.contains(&format!("{key:?}")), "{output}");
+}

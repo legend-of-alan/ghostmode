@@ -91,7 +91,7 @@ enum TestBackend {
 }
 
 /// A sandbox over any backend, which the When steps send each [`Request`] to.
-trait AnySandbox: Send {
+trait AnySandbox: Send + fmt::Debug {
     /// The sandbox's [`Reply`] to `request`.
     fn reply(&mut self, request: Request) -> BoxFuture<'_, Reply>;
 }
