@@ -14,6 +14,14 @@ Feature: A worker that crashes fails its run, and the session starts fresh
     Then the status is failed with an error naming NameError
     And the status says the session restarted
 
+  Scenario: A dump that finds its worker crashed loses the globals, and the next status says the session restarted
+    When the model executes x = 1
+    And the session's monty worker is killed
+    And the caller dumps the sandbox
+    And the model executes x
+    Then the status is failed with an error naming NameError
+    And the status says the session restarted
+
   Scenario: A run that starts in the fresh worker after a crash and expires says the session restarted
     Given a host whose `search` answers only when told to
     And a sandbox whose execute wait is 100 ms and poll wait is 100 ms
