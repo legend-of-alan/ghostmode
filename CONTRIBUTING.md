@@ -10,8 +10,12 @@ A contributor license agreement (CLA) and a developer certificate of origin (DCO
 
 ```sh
 cargo fmt --all -- --check
+cargo clippy --all-targets --locked --no-default-features -- -D warnings
 cargo clippy --all-targets --locked -- -D warnings
 cargo clippy --all-targets --locked --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --no-default-features
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --all-features
 cargo test --locked
 cargo test --locked --all-features
 ```

@@ -19,12 +19,10 @@ use serde_json::Value;
 
 use super::{SCRIPT_NAME, value};
 use crate::backend::{Backend, Ending, Progress, Streams};
-use crate::host;
-use crate::sandbox::Limits;
+use crate::host::{self, Host};
+use crate::sandbox::{Builder, Limits, Sandbox};
 
 /// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
-///
-/// [`Sandbox::builder`]: crate::Sandbox::builder
 pub struct Monty;
 
 /// A Python session in [`Monty`], holding the globals its scripts set.
@@ -34,6 +32,14 @@ pub struct Session(Box<MontyRepl>);
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,
+}
+
+impl<H: Host> Sandbox<H, Monty> {
+    /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
+    /// process.
+    pub fn builder(host: H) -> Builder<H, Monty> {
+        Builder::new(host, Monty)
+    }
 }
 
 impl Backend for Monty {
