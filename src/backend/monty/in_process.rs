@@ -5,7 +5,7 @@
 //! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::MontyPool`,
 //! which runs each session in a worker process.
 
-use std::{error, fmt, mem, thread};
+use std::{error, fmt, mem};
 
 use ::monty::{Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef};
 use monty_types::{
@@ -63,7 +63,7 @@ impl sealed::Backend for Monty {
         code: &str,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        on_script_stack(|| {
+        run_on_script_stack(|| {
             let mut streams = CollectedStreams::default();
             let monty_progress =
                 session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
@@ -77,7 +77,7 @@ impl sealed::Backend for Monty {
         answer: Result<Value, host::Error>,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        on_script_stack(|| {
+        run_on_script_stack(|| {
             let Suspension {
                 function_call,
                 mut streams,
@@ -92,7 +92,7 @@ impl sealed::Backend for Monty {
     }
 
     async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
-        on_script_stack(|| {
+        run_on_script_stack(|| {
             let Suspension {
                 function_call,
                 mut streams,
@@ -138,27 +138,16 @@ impl sealed::Backend for Monty {
 }
 
 /// How many bytes of stack in-process Monty uses to run a script and export its
-/// result.
+/// result, when the thread that polls `execute` or `poll` has less than this
+/// many bytes left.
 const SCRIPT_STACK_BYTES: usize = 16 * 1024 * 1024;
 
-/// Runs `f` with [`SCRIPT_STACK_BYTES`] of stack, so exporting a script result as
-/// deep as the default recursion depth doesn't overflow.
-fn on_script_stack<F, T>(f: F) -> T
+/// Runs `f` on at least [`SCRIPT_STACK_BYTES`] of stack.
+fn run_on_script_stack<F, T>(f: F) -> T
 where
-    F: FnOnce() -> T + Send,
-    T: Send,
+    F: FnOnce() -> T,
 {
-    thread::scope(|scope| {
-        match thread::Builder::new()
-            .stack_size(SCRIPT_STACK_BYTES)
-            .spawn_scoped(scope, f)
-            .expect("in-process Monty needs a stack to run a script")
-            .join()
-        {
-            Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
-        }
-    })
+    stacker::maybe_grow(SCRIPT_STACK_BYTES, SCRIPT_STACK_BYTES, f)
 }
 
 impl Monty {

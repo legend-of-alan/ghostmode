@@ -11,9 +11,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::host;
 
-/// The most deeply a list or object may nest before conversion fails. The same
-/// nesting serde_json allows when parsing JSON.
-const MAX_VALUE_DEPTH: usize = 127;
+/// The most deeply a list or object may nest before conversion fails. One less
+/// than the nesting serde_json allows when parsing, so a finished status or a
+/// tool-args object that wraps the value can still be parsed.
+const MAX_VALUE_DEPTH: usize = 126;
 
 /// The host call a script made to the tool `tool_id` with `args`, or the `TypeError` the script
 /// raises when `args` hold a positional argument, or the `ValueError` it raises when an
@@ -66,7 +67,7 @@ pub(crate) fn to_json(value: ObjectRef<'_>) -> Result<Value, String> {
     to_json_at(value, 0)
 }
 
-fn too_deep() -> String {
+fn too_deep_message() -> String {
     format!("the value is nested more than {MAX_VALUE_DEPTH} levels")
 }
 
@@ -86,7 +87,7 @@ fn drop_json(value: Value) {
 fn to_json_at(value: ObjectRef<'_>, depth: usize) -> Result<Value, String> {
     if let Some(items) = value.items() {
         if depth >= MAX_VALUE_DEPTH {
-            return Err(too_deep());
+            return Err(too_deep_message());
         }
         return items
             .into_iter()
@@ -95,7 +96,7 @@ fn to_json_at(value: ObjectRef<'_>, depth: usize) -> Result<Value, String> {
     }
     if let Some(pairs) = value.pairs().filter(|_| value.type_name() == "dict") {
         if depth >= MAX_VALUE_DEPTH {
-            return Err(too_deep());
+            return Err(too_deep_message());
         }
         let object: Result<Map<String, Value>, _> = pairs
             .into_iter()
@@ -137,7 +138,7 @@ fn push_json(value: Value, graph: &mut MontyGraph, depth: usize) -> Result<NodeI
         Value::Array(items) => {
             if depth >= MAX_VALUE_DEPTH {
                 drop_json(Value::Array(items));
-                return Err(too_deep());
+                return Err(too_deep_message());
             }
             let mut ids = Vec::with_capacity(items.len());
             let mut items = items.into_iter();
@@ -155,7 +156,7 @@ fn push_json(value: Value, graph: &mut MontyGraph, depth: usize) -> Result<NodeI
         Value::Object(object) => {
             if depth >= MAX_VALUE_DEPTH {
                 drop_json(Value::Object(object));
-                return Err(too_deep());
+                return Err(too_deep_message());
             }
             let mut pairs = Vec::with_capacity(object.len());
             let mut object = object.into_iter();

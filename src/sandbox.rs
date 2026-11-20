@@ -19,9 +19,8 @@ use crate::host::{self, Host, Tool};
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
 ///
-/// In-process `backend::Monty` runs the script inside the caller's process, and a poll of
-/// `execute` or `poll` waits until the script calls a tool or ends, while
-/// `backend::MontyPool` runs it in a worker process. A wait ends only while the script
+/// In-process `backend::Monty` runs the script on the thread that polls `execute` or `poll`,
+/// while `backend::MontyPool` runs it in a worker process. A wait ends only while the script
 /// waits on the host: a script that runs past it holds `execute` or `poll` until it calls a
 /// tool or ends, and [`Limits::run_time`] bounds the script's own time. Its `Debug` output never
 /// shows the signing key.

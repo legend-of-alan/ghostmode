@@ -15,7 +15,7 @@ The README and this guide use these words:
 
 ## Where scripts run
 
-`Monty` runs the script inside the caller's process. A poll of `Sandbox::execute` or `Sandbox::poll` waits until the script calls a tool or ends, for up to `Limits::run_time` in total, 30 s by default, and that thread runs nothing else in the meantime. On Tokio, call `execute`, `poll`, `Sandbox::dump` and `Builder::restore` inside `spawn_blocking` or `block_in_place`, so a script doesn't stall the runtime's other tasks.
+`Monty` runs the script inside the caller's process, on the thread that polls `Sandbox::execute` or `Sandbox::poll`. That thread runs nothing else until the script calls a tool or ends, for up to `Limits::run_time` in total, 30 s by default. On Tokio, call `execute`, `poll`, `Sandbox::dump` and `Builder::restore` inside `spawn_blocking` or `block_in_place`, so a script doesn't stall the runtime's other tasks.
 
 `Monty` isn't crash-isolated. A script, or a dump restored without a signing key, can panic, abort or hang the caller's process.
 
