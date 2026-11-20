@@ -1,8 +1,10 @@
+use std::num::NonZero;
 use std::process::{self, Command};
+use std::thread;
 
 use cucumber::when;
 
-use crate::World;
+use crate::{Reply, Request, World};
 
 /// Kills the `monty` worker running the session's script: the `monty` process whose parent is
 /// this test process. The test pool keeps no spare worker, so it is the only one the test starts.
@@ -26,4 +28,33 @@ fn kill_session_worker(_world: &mut World) {
     };
     let status = kill.status().expect("the process killer runs");
     assert!(status.success(), "{status}");
+}
+
+/// Opens one sandbox per worker the pool allows, which is the machine's available parallelism,
+/// and runs a script in each so that each holds its worker. Fails if any of them can't run it.
+#[when("every monty worker is held by another sandbox")]
+async fn hold_every_worker(world: &mut World) {
+    let workers = thread::available_parallelism().map_or(1, NonZero::get);
+    for _ in 0..workers {
+        let mut sandbox = world
+            .new_sandbox(None)
+            .await
+            .map_err(|(error, _)| error)
+            .expect("a new sandbox");
+        let request = Request::Execute {
+            code: "pass".to_string(),
+            restart: false,
+        };
+        let Reply::Status(status) = sandbox.reply(request).await else {
+            unreachable!("execute answers a status");
+        };
+        let status = serde_json::to_value(status).expect("status serializes");
+        assert_eq!(status["status"], "finished", "{status}");
+        world.other_sandboxes.push(sandbox);
+    }
+}
+
+#[when("one of the other sandboxes drops")]
+fn drop_other_sandbox(world: &mut World) {
+    world.other_sandboxes.pop().expect("another sandbox");
 }

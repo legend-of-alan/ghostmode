@@ -59,3 +59,19 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
     And the caller dumps the sandbox
     And the caller restores the dump with its first byte flipped into a new sandbox
     Then the caller's error is that the dump is format version 0, not version 1
+
+  Scenario Outline: A restore of <bytes> fails and returns the builder, which builds a sandbox over the same host
+    Given a host whose `search` answers {"hits": [1, 2]}
+    When the model executes x = 7
+    And the caller dumps the sandbox
+    And the caller restores <bytes> into a new sandbox
+    And the caller builds the builder that the failed restore returned
+    And the model executes search(query="a")["hits"]
+    Then the status is {"status": "finished", "value": [1, 2]}
+
+    Examples:
+      | bytes                                |
+      | the dump under key "A"               |
+      | the bytes "short"                    |
+      | the dump with its first byte flipped |
+      | the dump cut to its header           |

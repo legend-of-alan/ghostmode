@@ -53,6 +53,11 @@ async fn reset_sandbox(world: &mut World) {
     world.send(Request::Reset).await;
 }
 
+#[when("the caller drops the sandbox")]
+fn drop_sandbox(world: &mut World) {
+    world.sandbox.take().expect("a sandbox");
+}
+
 #[when("the caller dumps the sandbox")]
 async fn dump_sandbox(world: &mut World) {
     world.send(Request::Dump).await;
@@ -95,6 +100,15 @@ async fn restore_bytes(world: &mut World, text: String) {
     world.restore(text.as_bytes()).await;
 }
 
+#[when("the caller builds the builder that the failed restore returned")]
+async fn build_after_failed_restore(world: &mut World) {
+    let build = world
+        .build_after_failed_restore
+        .take()
+        .expect("a failed restore");
+    world.sandbox = Some(build.await);
+}
+
 #[then(regex = r"^the caller's error is that run (\d+) is open$")]
 fn error_is_run_open(world: &mut World, run_id: u64) {
     let error = world.caller_error.as_ref().expect("a caller error");
@@ -108,6 +122,14 @@ fn error_is_run_open(world: &mut World, run_id: u64) {
 fn error_is_restore(world: &mut World) {
     let error = world.caller_error.as_ref().expect("a caller error");
     assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
+}
+
+#[then(regex = r"^the caller's error is a failed restore naming (.+)$")]
+fn error_is_restore_naming(world: &mut World, cause: String) {
+    let error = world.caller_error.as_ref().expect("a caller error");
+    assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&cause), "{message}");
 }
 
 #[then(regex = r"^the caller's error is that the dump is format version (\d+), not version (\d+)$")]

@@ -105,8 +105,12 @@ pub struct Limits {
 
 /// What `execute` or `poll` answers, from the sandbox to the caller. It serializes as the JSON
 /// the caller sends to the model, such as `{"status": "running", "run_id": 1}`.
+///
+/// `Status` and each of its variants are `#[non_exhaustive]`, so a later release can add a
+/// status or a field without a breaking change. A `match` on it needs a `_` arm.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Status {
     /// The script ended, and this is the value of its last expression.
     #[non_exhaustive]
@@ -125,6 +129,7 @@ pub enum Status {
         restarted: bool,
     },
     /// A tool call was still unanswered when the wait ended. Poll this run id for the rest.
+    #[non_exhaustive]
     Running {
         /// The id to poll.
         run_id: u64,
@@ -610,16 +615,37 @@ impl<H: Host, B: Backend> Builder<H, B> {
     }
 
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
-    /// this builder's limits. Its run ids go on from the dumped sandbox's last one, and its next
-    /// finished or failed status says `restarted` if the dumped sandbox's would have. Bytes too
-    /// short to be a dump, that start with another format version, or that the backend can't
+    /// this builder's limits, though `backend::MontyPool` keeps the dumped session's limits
+    /// where those are stricter. Its run ids go on from the dumped sandbox's last one, and its
+    /// next finished or failed status says `restarted` if the dumped sandbox's would have. Bytes
+    /// too short to be a dump, that start with another format version, or that the backend can't
     /// load, are [`Error::Restore`].
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
     /// them are [`Error::SignatureMismatch`], checked in constant time before any other byte is
     /// read. Without a key, restore trusts the bytes, so restore only bytes you made.
-    pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, Error> {
-        let dump = match self.signing_key {
+    ///
+    /// A failed restore returns the error together with this builder, boxed, so the caller can
+    /// [`build`](Builder::build) a fresh sandbox over the same host and backend.
+    pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, (Error, Box<Self>)> {
+        match Self::read_dump(&self.backend, &self.limits, self.signing_key, bytes).await {
+            Ok((session, last_run_id, unreported_restart)) => {
+                Ok(self.build_with_session(session, last_run_id, unreported_restart))
+            }
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
+
+    /// The session that `bytes` from [`Sandbox::dump`] hold, loaded by `backend` under
+    /// `limits` and checked against `signing_key`, with the dumped sandbox's last run id and
+    /// whether its next status says `restarted`.
+    async fn read_dump(
+        backend: &B,
+        limits: &Limits,
+        signing_key: Option<[u8; 32]>,
+        bytes: &[u8],
+    ) -> Result<(B::Session, u64, bool), Error> {
+        let dump = match signing_key {
             Some(key) => {
                 let (dump, tag) = bytes
                     .split_last_chunk::<TAG_BYTES>()
@@ -640,13 +666,15 @@ impl<H: Host, B: Backend> Builder<H, B> {
                     .into(),
             ));
         }
-        let session = self
-            .backend
-            .restore(session_bytes, &self.limits)
+        let session = backend
+            .restore(session_bytes, limits)
             .await
             .map_err(Error::Restore)?;
-        let last_run_id = u64::from_le_bytes(*last_run_id_bytes);
-        Ok(self.build_with_session(session, last_run_id, *restart_byte != 0))
+        Ok((
+            session,
+            u64::from_le_bytes(*last_run_id_bytes),
+            *restart_byte != 0,
+        ))
     }
 
     /// The sandbox, with `session` as its idle Python session, `last_run_id` as the id its next

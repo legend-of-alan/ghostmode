@@ -58,3 +58,65 @@ Feature: Python values come back as the JSON the model reads
     And the status is failed with an error naming nested more than 126 levels
     When the model executes 1 + 1
     Then the status is {"status": "finished", "value": 2}
+
+  Scenario: A value that holds one list 2 ** 23 times fails
+    When the model executes this script:
+      """
+      a = [0]
+      for i in range(23):
+          a = [a, a]
+      a
+      """
+    Then the status is failed with an error naming more than 10485760 bytes to convert to JSON
+
+  Scenario Outline: <script> fails because it needs more than 10 MiB to convert to JSON
+    When the model executes <script>
+    Then the status is failed with an error naming more than 10485760 bytes to convert to JSON
+
+    Examples:
+      | script                          |
+      | s = 'x' * 5000000; [s] * 100    |
+      | 'x' * 10485761                  |
+
+  Scenario: An int with more than about 4300 digits fails
+    When the model executes 1 << 15000
+    Then the status is failed with an error naming an int with more than about 4300 digits
+
+  Scenario: An object whose repr holds an int with more than about 4300 digits fails
+    When the model executes this script:
+      """
+      class A:
+          def __init__(self):
+              self.x = 1 << 15000
+      A()
+      """
+    Then the status is failed with an error naming an int with more than about 4300 digits
+
+  Scenario: A tool argument that needs more than 10 MiB to convert to JSON raises in the script
+    Given a host whose `search` answers {"hits": []}
+    When the model executes search(query=['x' * 5000000] * 3)
+    Then the status is failed with an error naming ValueError
+    And the status is failed with an error naming more than 10485760 bytes to convert to JSON
+
+  Scenario: A dict whose keys 1 and '1' both become the JSON key "1" fails
+    When the model executes {1: 'a', '1': 'b'}
+    Then the status is failed with an error naming the JSON key "1" twice
+
+  Scenario: A tool argument Monty cuts short for nesting raises in the script
+    Given a sandbox whose `recursion_depth` is 20
+    And a host whose `search` answers {"hits": []}
+    When the model executes this script:
+      """
+      y = 1
+      for i in range(30):
+          y = [y]
+      search(query=y)
+      """
+    Then the status is failed with an error naming ValueError
+    And the status is failed with an error naming deeper than the sandbox's recursion_depth
+
+  Scenario: A host answer above i64::MAX reaches the script as that exact int
+    Given a host whose `search` answers {"n": 10000000000000000000}
+    When the model executes repr(search(query="a")["n"])
+    Then the status is {"status": "finished", "value": "10000000000000000000"}
+
