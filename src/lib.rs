@@ -32,7 +32,7 @@
 //!
 //! # #[cfg(feature = "monty")]
 //! # async fn execute_echo() {
-//! let mut sandbox = Builder::new(Echo, Monty).build().await;
+//! let mut sandbox = Builder::new(Echo, Monty::default()).build().await;
 //! let definitions = schema::mcp_definitions(sandbox.tools());
 //! let status = sandbox.execute("echo(text='hello')", false).await;
 //! let reply = serde_json::to_value(&status).unwrap();
