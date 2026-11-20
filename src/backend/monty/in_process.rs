@@ -7,10 +7,7 @@
 
 use std::{error, mem};
 
-use ::monty::{
-    DUMP_VERSION, Dump, DumpError, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError,
-    SessionRef,
-};
+use ::monty::{Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef};
 use monty_types::{
     CollectedStreams, CompileOptions, ExtFunctionResult, MontyException, NameLookupResult,
     PrintStream, PrintWriter, ResourceTracker,
@@ -19,10 +16,11 @@ use serde_json::Value;
 
 use super::{SCRIPT_NAME, value};
 use crate::backend::{Backend, Ending, Progress, Streams};
-use crate::host::{self, Host};
-use crate::sandbox::{Builder, Limits, Sandbox};
+use crate::host;
+use crate::sandbox::Limits;
 
-/// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
+/// Runs scripts in a Monty session inside the caller's process.
+/// [`Sandbox::builder`](crate::Sandbox::builder) uses it.
 pub struct Monty;
 
 /// A Python session in [`Monty`], holding the globals its scripts set.
@@ -32,14 +30,6 @@ pub struct Session(Box<MontyRepl>);
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,
-}
-
-impl<H: Host> Sandbox<H, Monty> {
-    /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
-    /// process.
-    pub fn builder(host: H) -> Builder<H, Monty> {
-        Builder::new(host, Monty)
-    }
 }
 
 impl Backend for Monty {
@@ -114,18 +104,13 @@ impl Backend for Monty {
         (bytes.map_err(Into::into), false)
     }
 
-    /// Bytes Monty can't load are a [`DumpError`]. A dump of a suspended or one-shot run is
-    /// [`DumpError::Unsupported`], whose `found` is this build's dump version.
     async fn restore(
         &self,
         bytes: &[u8],
         limits: &Limits,
     ) -> Result<Session, Box<dyn error::Error + Send + Sync>> {
         let ::monty::Session::Idle(mut session) = Dump::load(bytes)?.state else {
-            return Err(Box::new(DumpError::Unsupported {
-                found: DUMP_VERSION,
-                reason: super::DUMP_HOLDS_RUN.to_string(),
-            }));
+            return Err(super::DUMP_HOLDS_RUN.into());
         };
         set_limits_and_os_policy(&mut session, limits);
         Ok(Session(session))
