@@ -18,17 +18,13 @@ use crate::host::{self, Host};
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
 pub struct Sandbox<H, B: Backend> {
-    host: H,
-    tool_ids: Vec<String>,
-    backend: B,
+    builder: Builder<H, B>,
     /// The session, or `None` once a backend call that held it was dropped, which loses it.
     state: Option<State<B>>,
+    /// The id of the last run `execute` started, which is the suspended run's id while one is
+    /// open.
     last_run_id: u64,
     unreported_restart: bool,
-    execute_wait: Duration,
-    poll_wait: Duration,
-    limits: Limits,
-    signing_key: Option<[u8; 32]>,
 }
 
 /// Sets up a [`Sandbox`]. Made by `Sandbox::builder` (with the `monty` feature) or [`Builder::new`].
@@ -151,7 +147,6 @@ enum State<B: Backend> {
 
 /// A script suspended at a tool call, with the host's answer still to be picked up.
 struct Run<B: Backend> {
-    id: u64,
     answered_calls: Vec<host::Call>,
     call: host::Call,
     suspension: B::Suspension,
@@ -174,6 +169,24 @@ impl Default for Limits {
     }
 }
 
+/// Awaits the `Status` future `step` in an info span named `name`, which records the run id, the
+/// status, the call count and the duration.
+macro_rules! trace_step {
+    ($name:literal, $step:expr) => {{
+        let span = tracing::info_span!(
+            $name,
+            run_id = Empty,
+            status = Empty,
+            call_count = Empty,
+            duration = Empty
+        );
+        let started = Instant::now();
+        let status: Status = $step.instrument(span.clone()).await;
+        record_end(&span, status.as_str(), started);
+        status
+    }};
+}
+
 impl<H: Host, B: Backend> Sandbox<H, B> {
     /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
     /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
@@ -184,15 +197,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// lost to a dropped `execute`, `poll` or `cancel` future also starts fresh, and the next
     /// finished or failed status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
-        let span = tracing::info_span!(
-            "execute",
-            run_id = Empty,
-            status = Empty,
-            call_count = Empty,
-            duration = Empty
-        );
-        let started = Instant::now();
-        let status = async {
+        trace_step!("execute", async {
             if let Some(status) = self.expire_idle_run().await {
                 return status;
             }
@@ -204,61 +209,37 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 suspended => {
                     self.state = suspended;
                     let run_id = self.last_run_id;
-                    let error = Error::RunOpen { run_id }.to_string();
-                    return Status::Failed {
-                        error,
-                        calls: Vec::new(),
-                        stdout: None,
-                        stderr: None,
-                        restarted: false,
-                    };
+                    return Status::failed(Error::RunOpen { run_id }.to_string());
                 }
             };
             self.last_run_id += 1;
-            let id = self.last_run_id;
-            Span::current().record("run_id", id).record("call_count", 0);
-            let progress = self.backend.feed_start(session, code, &self.tool_ids).await;
-            if let Some(status) = self.suspend_or_end(id, Vec::new(), progress).await {
+            Span::current()
+                .record("run_id", self.last_run_id)
+                .record("call_count", 0);
+            let progress = self
+                .builder
+                .backend
+                .feed_start(session, code, &self.builder.tool_ids)
+                .await;
+            if let Some(status) = self.suspend_or_end(Vec::new(), progress).await {
                 return status;
             }
-            self.wait_timeout(self.execute_wait).await
-        }
-        .instrument(span.clone())
-        .await;
-        record_end(&span, status.as_str(), started);
-        status
+            self.wait_timeout(self.builder.execute_wait).await
+        })
     }
 
     /// Waits up to the poll wait for the run with `run_id` that `execute` left running.
     pub async fn poll(&mut self, run_id: u64) -> Status {
-        let span = tracing::info_span!(
-            "poll",
-            run_id,
-            status = Empty,
-            call_count = Empty,
-            duration = Empty
-        );
-        let started = Instant::now();
-        let status = async {
-            if !matches!(&self.state, Some(State::Suspended(run)) if run.id == run_id) {
-                let error = format!("no run {run_id}");
-                return Status::Failed {
-                    error,
-                    calls: Vec::new(),
-                    stdout: None,
-                    stderr: None,
-                    restarted: false,
-                };
+        trace_step!("poll", async {
+            Span::current().record("run_id", run_id);
+            if !self.is_open_run(run_id) {
+                return Status::failed(format!("no run {run_id}"));
             }
             match self.expire_idle_run().await {
                 Some(status) => status,
-                None => self.wait_timeout(self.poll_wait).await,
+                None => self.wait_timeout(self.builder.poll_wait).await,
             }
-        }
-        .instrument(span.clone())
-        .await;
-        record_end(&span, status.as_str(), started);
-        status
+        })
     }
 
     /// Cancels the run with `run_id` that `execute` left running, and says whether that run was
@@ -266,10 +247,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// lost them, which the next status reports as `restarted`. The host's answer to the call the
     /// script waits on is dropped. Cancelling any other run changes nothing.
     pub async fn cancel(&mut self, run_id: u64) -> bool {
-        let Some(run) = self.take_run_if(|run| run.id == run_id) else {
+        let is_open = self.is_open_run(run_id);
+        let Some(run) = self.take_run_if(|_| is_open) else {
             return false;
         };
-        let (session, _) = self.backend.abandon(run.suspension).await;
+        let (session, _) = self.builder.backend.abandon(run.suspension).await;
         self.state = Some(State::Idle(session));
         true
     }
@@ -278,7 +260,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// `restarted`. An open run is dropped with the host's answer to its call, so polling it
     /// answers `failed`.
     pub async fn reset(&mut self) {
-        self.state = Some(State::Idle(self.backend.new_session(&self.limits).await));
+        self.state = Some(State::Idle(
+            self.builder.backend.new_session(&self.builder.limits).await,
+        ));
         self.unreported_restart = true;
     }
 
@@ -292,8 +276,13 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
         match &mut self.state {
             Some(State::Idle(session)) => {
-                let mut bytes = self.backend.dump(session).await.map_err(Error::Dump)?;
-                if let Some(key) = self.signing_key {
+                let mut bytes = self
+                    .builder
+                    .backend
+                    .dump(session)
+                    .await
+                    .map_err(Error::Dump)?;
+                if let Some(key) = self.builder.signing_key {
                     let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
                     bytes.extend_from_slice(&tag);
                 }
@@ -303,6 +292,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 run_id: self.last_run_id,
             }),
         }
+    }
+
+    /// Whether `run_id` is the id of the run `execute` left running.
+    fn is_open_run(&self, run_id: u64) -> bool {
+        matches!(self.state, Some(State::Suspended(_))) && run_id == self.last_run_id
     }
 
     /// Takes the suspended run out of the sandbox if `condition` holds for it.
@@ -331,14 +325,15 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 Either::Right(_) => {
                     run.idle_since = Instant::now();
                     Span::current().record("call_count", run.answered_calls.len());
-                    return Status::Running { run_id: run.id };
+                    return Status::Running {
+                        run_id: self.last_run_id,
+                    };
                 }
             };
             let Some(State::Suspended(run)) = self.state.take() else {
                 panic!("wait_timeout without a suspended run");
             };
             let Run {
-                id,
                 mut answered_calls,
                 call,
                 suspension,
@@ -348,39 +343,39 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 Some(answer) => {
                     answered_calls.push(self.cut_args(call));
                     Span::current().record("call_count", answered_calls.len());
-                    self.backend
-                        .resume(suspension, answer, &self.tool_ids)
+                    self.builder
+                        .backend
+                        .resume(suspension, answer, &self.builder.tool_ids)
                         .await
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
                     let ending = self
+                        .builder
                         .backend
-                        .abort(suspension, message, &self.tool_ids)
+                        .abort(suspension, message, &self.builder.tool_ids)
                         .await;
                     return self.end_run(ending, answered_calls);
                 }
             };
-            if let Some(status) = self.suspend_or_end(id, answered_calls, progress).await {
+            if let Some(status) = self.suspend_or_end(answered_calls, progress).await {
                 return status;
             }
         }
     }
 
-    /// Suspends run `id` at the tool call `progress` reached, or ends it with its status. A call
-    /// past the call limit ends the run instead of reaching the host.
+    /// Suspends the last run at the tool call `progress` reached, or ends it with its status. A
+    /// call past the call limit ends the run instead of reaching the host.
     async fn suspend_or_end(
         &mut self,
-        id: u64,
         answered_calls: Vec<host::Call>,
         progress: Progress<B>,
     ) -> Option<Status> {
-        let call_limit = self.limits.calls_per_execute;
+        let call_limit = self.builder.limits.calls_per_execute;
         let ending = match progress {
             Progress::Call { call, suspension } if answered_calls.len() < call_limit => {
-                let answer = self.call_host(id, &call);
+                let answer = self.call_host(&call);
                 self.state = Some(State::Suspended(Run {
-                    id,
                     answered_calls,
                     call,
                     suspension,
@@ -391,8 +386,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             }
             Progress::Call { suspension, .. } => {
                 let message = format!("the script reached the call limit of {call_limit}");
-                self.backend
-                    .abort(suspension, message, &self.tool_ids)
+                self.builder
+                    .backend
+                    .abort(suspension, message, &self.builder.tool_ids)
                     .await
             }
             Progress::Ended(ending) => ending,
@@ -403,7 +399,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// Ends the suspended run if it has waited past the idle timeout and the host's answer is not
     /// ready, and says it expired. A run whose answer is ready stays for the next wait to resume.
     async fn expire_idle_run(&mut self) -> Option<Status> {
-        let idle_timeout = self.limits.idle_timeout?;
+        let idle_timeout = self.builder.limits.idle_timeout?;
         if let Some(State::Suspended(run)) = &mut self.state
             && let Some(answer) = (&mut run.answer).now_or_never()
         {
@@ -411,9 +407,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             return None;
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
-        let (session, streams) = self.backend.abandon(run.suspension).await;
+        let (session, streams) = self.builder.backend.abandon(run.suspension).await;
         let ending = Ending {
-            result: Err(format!("run {} expired", run.id)),
+            result: Err(format!("run {} expired", self.last_run_id)),
             streams,
             session,
             restarted: false,
@@ -441,7 +437,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let Streams { stdout, stderr } = streams;
         let (stdout_chars, stderr_chars) = (stdout.chars().count(), stderr.chars().count());
         let (result_share, streams_share) = split_budget(
-            self.limits.output_chars,
+            self.builder.limits.output_chars,
             result_chars,
             stdout_chars + stderr_chars,
         );
@@ -469,23 +465,24 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// `call` with each argument cut to its share of [`Limits::output_chars`], which is
     /// `output_chars / calls_per_execute`.
     fn cut_args(&self, mut call: host::Call) -> host::Call {
-        let share = self.limits.output_chars / self.limits.calls_per_execute.max(1);
+        let limits = &self.builder.limits;
+        let share = limits.output_chars / limits.calls_per_execute.max(1);
         for value in call.args.values_mut() {
             *value = cut_value(mem::take(value), share);
         }
         call
     }
 
-    /// Sends `call`, made by run `run_id`, to the host and traces its answer in a `call` span
+    /// Sends `call`, made by the last run, to the host and traces its answer in a `call` span
     /// with no parent. The answer is `None` if the call timeout passes first.
     fn call_host(
         &self,
-        run_id: u64,
         call: &host::Call,
     ) -> BoxFuture<'static, Option<Result<Value, host::Error>>> {
+        let run_id = self.last_run_id;
         let span = tracing::info_span!(parent: None, "call", run_id, tool_id = %call.tool_id, status = Empty, duration = Empty);
-        let answer = self.host.call(call);
-        let timeout = self.limits.call_timeout.map(Delay::new);
+        let answer = self.builder.host.call(call);
+        let timeout = self.builder.limits.call_timeout.map(Delay::new);
         let started = Instant::now();
         async move {
             let answer = match timeout {
@@ -593,16 +590,10 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// The sandbox, with `session` as its idle Python session.
     fn build_with_session(self, session: B::Session) -> Sandbox<H, B> {
         Sandbox {
-            host: self.host,
-            tool_ids: self.tool_ids,
-            backend: self.backend,
+            builder: self,
             state: Some(State::Idle(session)),
             last_run_id: 0,
             unreported_restart: false,
-            execute_wait: self.execute_wait,
-            poll_wait: self.poll_wait,
-            limits: self.limits,
-            signing_key: self.signing_key,
         }
     }
 }
@@ -628,6 +619,17 @@ impl error::Error for Error {
 }
 
 impl Status {
+    /// A `failed` status with `error`, no answered calls, no printed output and no restart.
+    fn failed(error: String) -> Self {
+        Self::Failed {
+            error,
+            calls: Vec::new(),
+            stdout: None,
+            stderr: None,
+            restarted: false,
+        }
+    }
+
     /// The status's `status` tag in the model's JSON, such as `"running"`.
     fn as_str(&self) -> &'static str {
         match self {
