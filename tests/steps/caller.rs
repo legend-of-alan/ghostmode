@@ -3,6 +3,11 @@ use futures::FutureExt;
 
 use crate::{Request, World};
 
+#[given(regex = r#"^a sandbox whose signing key is "([A-Z])"$"#)]
+fn sandbox_signing_key(world: &mut World, letter: char) {
+    world.signing_key = Some([letter as u8; 32]);
+}
+
 #[when(regex = r"^the caller cancels run (\d+)$")]
 async fn cancel_run(world: &mut World, run_id: u64) {
     world.send(Request::Cancel(run_id)).await;
@@ -53,11 +58,6 @@ async fn dump_sandbox(world: &mut World) {
 async fn restore_dump(world: &mut World) {
     let bytes = world.dump.clone().expect("a dump");
     world.restore(&bytes).await;
-}
-
-#[given(regex = r#"^a sandbox whose signing key is "([A-Z])"$"#)]
-fn sandbox_signing_key(world: &mut World, letter: char) {
-    world.signing_key = Some([letter as u8; 32]);
 }
 
 #[when(regex = r#"^the caller restores the dump under key "([A-Z])" into a new sandbox$"#)]
