@@ -30,7 +30,7 @@ pub(crate) fn to_call(tool_id: String, args: &CallArgs) -> Result<host::Call, Mo
             to_json(value).map(|value| (key, value))
         })
         .collect::<Result<_, _>>()
-        .map_err(value_error)?;
+        .map_err(too_deep_exception)?;
     Ok(host::Call::new(tool_id, args))
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn to_exception(error: host::Error) -> MontyException {
 
 /// The `ValueError` a script raises when a value is nested more than [`MAX_VALUE_DEPTH`]
 /// levels.
-fn value_error(message: String) -> MontyException {
+fn too_deep_exception(message: String) -> MontyException {
     MontyException::new(ExcType::ValueError, Some(message))
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn from_answer(
     answer: Result<Value, host::Error>,
 ) -> Result<MontyObject, MontyException> {
     match answer {
-        Ok(value) => from_json(value).map_err(value_error),
+        Ok(value) => from_json(value).map_err(too_deep_exception),
         Err(error) => Err(to_exception(error)),
     }
 }
