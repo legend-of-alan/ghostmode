@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 
 use cucumber::gherkin::Step;
 use cucumber::then;
-use ghostmode::host::Host;
 use ghostmode::schema;
 use serde_json::Value;
 
@@ -10,29 +9,32 @@ use crate::World;
 use crate::test_host::parse_json;
 
 #[then(
-    regex = r"^the MCP tools are `execute` and `poll`, each with a name, description and inputSchema$"
+    regex = r"^the MCP definitions are `execute` and `poll`, each with a name, description and inputSchema$"
 )]
-fn mcp_tools_are_execute_and_poll(world: &mut World) {
-    let tools = schema::list_mcp_tools(&world.host.tools());
-    let ids: Vec<&Value> = tools.iter().map(|tool| &tool["name"]).collect();
+async fn mcp_definitions_are_execute_and_poll(world: &mut World) {
+    let definitions = schema::mcp_definitions(world.sandbox_tools().await);
+    let ids: Vec<&Value> = definitions
+        .iter()
+        .map(|definition| &definition["name"])
+        .collect();
     assert_eq!(ids, ["execute", "poll"]);
-    for tool in &tools {
+    for definition in &definitions {
         assert_eq!(
-            object_keys(tool),
+            object_keys(definition),
             BTreeSet::from(["description", "inputSchema", "name"]),
-            "{tool}"
+            "{definition}"
         );
-        assert!(tool["description"].is_string(), "{tool}");
+        assert!(definition["description"].is_string(), "{definition}");
     }
 }
 
-#[then(regex = r"^the OpenAI functions carry the same names, descriptions and schemas$")]
-fn openai_functions_match_mcp_tools(world: &mut World) {
-    let host_tools = world.host.tools();
-    let tools = schema::list_mcp_tools(&host_tools);
-    let functions = schema::list_openai_functions(&host_tools);
-    assert_eq!(functions.len(), tools.len(), "{functions:?}");
-    for (function, tool) in functions.iter().zip(&tools) {
+#[then(regex = r"^the OpenAI definitions carry the same names, descriptions and schemas$")]
+async fn openai_definitions_match_mcp_definitions(world: &mut World) {
+    let tools = world.sandbox_tools().await;
+    let mcp_definitions = schema::mcp_definitions(tools);
+    let functions = schema::openai_definitions(tools);
+    assert_eq!(functions.len(), mcp_definitions.len(), "{functions:?}");
+    for (function, mcp_definition) in functions.iter().zip(&mcp_definitions) {
         assert_eq!(
             object_keys(function),
             BTreeSet::from(["function", "type"]),
@@ -40,15 +42,25 @@ fn openai_functions_match_mcp_tools(world: &mut World) {
         );
         assert_eq!(function["type"], "function", "{function}");
         let definition = &function["function"];
-        assert_eq!(definition["name"], tool["name"], "{function}");
-        assert_eq!(definition["description"], tool["description"], "{function}");
-        assert_eq!(definition["parameters"], tool["inputSchema"], "{function}");
+        assert_eq!(definition["name"], mcp_definition["name"], "{function}");
+        assert_eq!(
+            definition["description"], mcp_definition["description"],
+            "{function}"
+        );
+        assert_eq!(
+            definition["parameters"], mcp_definition["inputSchema"],
+            "{function}"
+        );
     }
 }
 
 #[then(regex = r"^the `(execute|poll)` input schema without descriptions is (\{.*\})$")]
-fn input_schema_without_descriptions_is(world: &mut World, function_id: String, expected: String) {
-    let mut input_schema = input_schema_of(world, &function_id);
+async fn input_schema_without_descriptions_is(
+    world: &mut World,
+    function_id: String,
+    expected: String,
+) {
+    let mut input_schema = input_schema_of(world, &function_id).await;
     remove_descriptions(&mut input_schema);
     assert_eq!(input_schema, parse_json(&expected));
 }
@@ -65,10 +77,10 @@ fn remove_descriptions(schema: &mut Value) {
     }
 }
 
-/// The input schema of `execute` or `poll`, whichever is `function_id`, that `list_mcp_tools`
-/// lists for the scenario's host.
-fn input_schema_of(world: &World, function_id: &str) -> Value {
-    let definitions = schema::list_mcp_tools(&world.host.tools());
+/// The input schema of `execute` or `poll`, whichever is `function_id`, that `mcp_definitions`
+/// lists for the scenario's sandbox.
+async fn input_schema_of(world: &mut World, function_id: &str) -> Value {
+    let definitions = schema::mcp_definitions(world.sandbox_tools().await);
     let definition = definitions
         .iter()
         .find(|definition| definition["name"] == function_id);
@@ -76,28 +88,30 @@ fn input_schema_of(world: &World, function_id: &str) -> Value {
 }
 
 #[then(regex = r#"^the execute description contains "(.+)"$"#)]
-fn execute_description_contains(world: &mut World, text: String) {
-    let description = execute_description(world);
+async fn execute_description_contains(world: &mut World, text: String) {
+    let description = execute_description(world).await;
     assert!(description.contains(&text), "{description}");
 }
 
 #[then(regex = r"^the execute description contains:$")]
-fn execute_description_contains_block(world: &mut World, step: &Step) {
+async fn execute_description_contains_block(world: &mut World, step: &Step) {
     let text = step.docstring.as_ref().expect("a docstring").trim();
-    let description = execute_description(world);
+    let description = execute_description(world).await;
     assert!(description.contains(text), "{description}");
 }
 
 #[then(regex = r#"^the execute description doesn't contain "(.+)"$"#)]
-fn execute_description_lacks(world: &mut World, text: String) {
-    let description = execute_description(world);
+async fn execute_description_lacks(world: &mut World, text: String) {
+    let description = execute_description(world).await;
     assert!(!description.contains(&text), "{description}");
 }
 
-/// The description of `execute` that `list_mcp_tools` lists for the scenario's host.
-fn execute_description(world: &World) -> String {
-    let tools = schema::list_mcp_tools(&world.host.tools());
-    let execute = tools.iter().find(|tool| tool["name"] == "execute");
+/// The description of `execute` that `mcp_definitions` lists for the scenario's sandbox.
+async fn execute_description(world: &mut World) -> String {
+    let definitions = schema::mcp_definitions(world.sandbox_tools().await);
+    let execute = definitions
+        .iter()
+        .find(|definition| definition["name"] == "execute");
     let description = execute.expect("execute")["description"].as_str();
     description.expect("a description").to_owned()
 }

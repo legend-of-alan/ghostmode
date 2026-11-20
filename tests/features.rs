@@ -27,6 +27,7 @@ use cucumber::World as _;
 use cucumber::writer::Stats as _;
 use futures::future::{self, BoxFuture, FutureExt};
 use ghostmode::backend::{Backend, Monty};
+use ghostmode::host::Tool;
 use ghostmode::{Builder, Limits, Sandbox, Status};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::Dispatch;
@@ -94,6 +95,9 @@ enum TestBackend {
 trait AnySandbox: Send + fmt::Debug {
     /// The sandbox's [`Reply`] to `request`.
     fn reply(&mut self, request: Request) -> BoxFuture<'_, Reply>;
+
+    /// The tools the sandbox read from its host.
+    fn tools(&self) -> &[Tool];
 }
 
 impl<B: Backend + Send + 'static> AnySandbox for Sandbox<test_host::TestHost, B> {
@@ -113,6 +117,10 @@ impl<B: Backend + Send + 'static> AnySandbox for Sandbox<test_host::TestHost, B>
             }
         }
         .boxed()
+    }
+
+    fn tools(&self) -> &[Tool] {
+        Sandbox::tools(self)
     }
 }
 
@@ -187,6 +195,13 @@ impl World {
             Some(sandbox) => sandbox,
             None => self.new_sandbox(None).await.expect("a new sandbox"),
         }
+    }
+
+    /// The tools the scenario's sandbox read from its host, building the sandbox if there is
+    /// none yet.
+    async fn sandbox_tools(&mut self) -> &[Tool] {
+        let sandbox = self.take_sandbox().await;
+        self.sandbox.insert(sandbox).tools()
     }
 
     /// Replaces the scenario's sandbox with a new one restored from `bytes`, or keeps the

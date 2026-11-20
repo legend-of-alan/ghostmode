@@ -9,7 +9,7 @@ use crate::host;
 /// answers with: `{"name", "description", "inputSchema"}`. The schemas set
 /// `additionalProperties: false`, and the execute description lists each of `host_tools` whose
 /// id is a Python identifier as a typed, keyword-only Python stub.
-pub fn list_mcp_tools(host_tools: &[host::Tool]) -> Vec<Value> {
+pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
     let stubs: Vec<String> = host_tools
         .iter()
         .filter(|tool| is_python_identifier(&tool.id))
@@ -57,18 +57,18 @@ pub fn list_mcp_tools(host_tools: &[host::Tool]) -> Vec<Value> {
     ]
 }
 
-/// The same two functions as [`list_mcp_tools`], as OpenAI functions:
+/// The same two functions as [`mcp_definitions`], as OpenAI functions:
 /// `{"type": "function", "function": {"name", "description", "parameters"}}`.
-pub fn list_openai_functions(host_tools: &[host::Tool]) -> Vec<Value> {
-    list_mcp_tools(host_tools)
+pub fn openai_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
+    mcp_definitions(host_tools)
         .into_iter()
-        .map(|tool| {
+        .map(|definition| {
             json!({
                 "type": "function",
                 "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["inputSchema"],
+                    "name": definition["name"],
+                    "description": definition["description"],
+                    "parameters": definition["inputSchema"],
                 },
             })
         })
