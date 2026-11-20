@@ -8,9 +8,11 @@ use crate::host;
 use crate::sandbox::Limits;
 
 #[cfg(feature = "monty")]
-pub use self::monty::{DumpError, Monty};
+pub use self::monty::Monty;
+#[cfg(feature = "monty-pool")]
+pub use self::monty::MontyPool;
 
-pub mod monty;
+mod monty;
 
 /// Runs a sandbox's scripts in Python sessions whose globals persist from one script to the
 /// next. It holds no session: each method takes the idle session, or the script suspended at a
@@ -55,14 +57,19 @@ pub trait Backend: Sized {
     ) -> impl Future<Output = Ending<Self>> + Send;
 
     /// Drops the suspended script without running it further, and gives back its idle session
-    /// with the globals the script had set, and what it printed.
+    /// with the globals the script had set, and what it printed. A backend that can't keep the
+    /// globals gives back a session that the next script's [`Ending`] reports as restarted.
     fn abandon(
         &self,
         suspension: Self::Suspension,
     ) -> impl Future<Output = (Self::Session, Streams)> + Send;
 
-    /// The bytes of the idle `session`, which [`Backend::restore`] reads back.
-    fn dump(&self, session: &mut Self::Session) -> impl Future<Output = Vec<u8>> + Send;
+    /// The bytes of the idle `session`, which [`Backend::restore`] reads back, or why the
+    /// backend couldn't write them.
+    fn dump(
+        &self,
+        session: &mut Self::Session,
+    ) -> impl Future<Output = Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>> + Send;
 
     /// The idle session that `bytes` from [`Backend::dump`] hold, running under `limits` like a
     /// [new session](Backend::new_session), whatever limits it was dumped with.
@@ -93,8 +100,12 @@ pub struct Ending<B: Backend> {
     pub result: Result<Value, String>,
     /// What the script printed.
     pub streams: Streams,
-    /// The idle session, with the globals the script set.
+    /// The idle session, with the globals the script set. A backend that lost those globals
+    /// gives back an empty session, and the next script's `Ending` says it restarted.
     pub session: B::Session,
+    /// Whether the session started fresh before this script, with no globals, because the
+    /// backend lost the session it had, such as to a worker crash.
+    pub restarted: bool,
 }
 
 /// What a script printed, each stream in the order it was printed.

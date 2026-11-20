@@ -20,6 +20,8 @@ cargo test --locked
 cargo test --locked --all-features
 ```
 
+The `--all-features` tests run every scenario against the `monty-pool` feature's `backend::MontyPool` too, which needs the `monty` worker binary on your `PATH`. Install it with `cargo install monty-runtime --version =1.6.0 --locked`.
+
 CI also fails on a runtime call or a print in `src`, tokio in the default build's dependency tree, a plain comment in `src` or `tests`, a touched name that breaks Naming rule 8, and a dependency without a permissive license. Pull requests only run CI on Linux. Pushes to main also run it on macOS and Windows.
 
 ## Issues and PRs

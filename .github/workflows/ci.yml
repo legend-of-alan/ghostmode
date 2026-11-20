@@ -87,12 +87,16 @@ jobs:
                 n = split(terms, ands, / AND /)
                 for (i = 1; i <= n; i++) {
                   free = 0; m = split(ands[i], ors, / OR /)
-                  for (j = 1; j <= m; j++) if (ors[j] ~ /^ *(MIT|Apache-2\.0( WITH LLVM-exception)?|Unlicense|Unicode-3\.0|Unicode-DFS-2016|BlueOak-1\.0\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0) *$/) free = 1
+                  for (j = 1; j <= m; j++) if (ors[j] ~ /^ *(MIT|Apache-2\.0( WITH LLVM-exception)?|Unlicense|Unicode-3\.0|Unicode-DFS-2016|BlueOak-1\.0\.0|CDLA-Permissive-2\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0) *$/) free = 1
                   if (!free) { print $0; bad = 1 }
                 }
               }
               END { exit bad }'
           done
+
+      # The pool backend's scenarios run in the `monty` worker binary, at the version monty-pool pins.
+      - name: monty worker
+        run: cargo install monty-runtime --version =1.6.0 --locked
 
       - name: test
         shell: bash

@@ -1,5 +1,4 @@
 use cucumber::{given, then, when};
-use ghostmode::backend::DumpError;
 
 use crate::{Request, World};
 
@@ -75,14 +74,10 @@ fn error_is_run_open(world: &mut World, run_id: u64) {
     );
 }
 
-#[then("the caller's error is Monty's NotADump")]
-fn error_is_not_a_dump(world: &mut World) {
+#[then("the caller's error is that the backend can't restore the bytes")]
+fn error_is_restore(world: &mut World) {
     let error = world.caller_error.as_ref().expect("a caller error");
-    assert!(
-        matches!(error, ghostmode::Error::Restore(reason)
-            if reason.downcast_ref::<DumpError>() == Some(&DumpError::NotADump)),
-        "{error:?}"
-    );
+    assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
 }
 
 #[then("the caller's error is that the signature doesn't match")]
