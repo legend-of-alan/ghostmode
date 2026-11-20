@@ -9,7 +9,7 @@ repository = "https://github.com/legend-of-alan/ghostmode"
 readme = "README.md"
 keywords = ["agent", "llm", "code-mode", "sandbox", "python"]
 categories = ["development-tools", "asynchronous"]
-exclude = [".github", "AGENTS.md", "assets", "rust-toolchain.toml"]
+exclude = [".github", "AGENTS.md", "assets", "rust-toolchain.toml", "tests/doc_code_names.rs"]
 
 [package.metadata.docs.rs]
 all-features = true
