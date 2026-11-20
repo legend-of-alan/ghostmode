@@ -47,8 +47,8 @@ fn openai_functions_match_mcp_tools(world: &mut World) {
 }
 
 #[then(regex = r"^the `(execute|poll)` input schema without descriptions is (\{.*\})$")]
-fn input_schema_without_descriptions_is(world: &mut World, tool_id: String, expected: String) {
-    let mut input_schema = input_schema_of(world, &tool_id);
+fn input_schema_without_descriptions_is(world: &mut World, function_id: String, expected: String) {
+    let mut input_schema = input_schema_of(world, &function_id);
     remove_descriptions(&mut input_schema);
     assert_eq!(input_schema, parse_json(&expected));
 }
@@ -65,12 +65,14 @@ fn remove_descriptions(schema: &mut Value) {
     }
 }
 
-/// The input schema of the model's tool `tool_id` that `list_mcp_tools` lists for the
-/// scenario's host.
-fn input_schema_of(world: &World, tool_id: &str) -> Value {
-    let tools = schema::list_mcp_tools(&world.host.tools());
-    let tool = tools.iter().find(|tool| tool["name"] == tool_id);
-    tool.expect("a listed tool")["inputSchema"].clone()
+/// The input schema of `execute` or `poll`, whichever is `function_id`, that `list_mcp_tools`
+/// lists for the scenario's host.
+fn input_schema_of(world: &World, function_id: &str) -> Value {
+    let definitions = schema::list_mcp_tools(&world.host.tools());
+    let definition = definitions
+        .iter()
+        .find(|definition| definition["name"] == function_id);
+    definition.expect("a listed function")["inputSchema"].clone()
 }
 
 #[then(regex = r#"^the execute description contains "(.+)"$"#)]

@@ -27,6 +27,10 @@ const SCRIPT_NAME: &str = "script.py";
 /// session.
 const DUMP_HOLDS_RUN: &str = "the dump holds a run, and ghostmode restores only an idle session";
 
+/// The error that ends a script waiting on Monty futures. A tool call hands the script a plain
+/// value, never a future, so a script that awaits a tool's answer gets `TypeError` instead.
+const TOOLS_NOT_AWAITABLE: &str = "tools are not awaitable";
+
 /// Monty's limits that stop a script at `limits`' run time, memory and recursion depth. They
 /// put no bound on suspensions, so only [`Limits::calls_per_execute`] limits tool calls.
 fn resource_limits(limits: &Limits) -> ResourceLimits {

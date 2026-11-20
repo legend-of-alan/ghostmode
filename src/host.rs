@@ -12,7 +12,9 @@ pub trait Host {
 
     /// Answers one tool call from a script. The future clones what it needs from `call`. The
     /// run waits for the future, and a run that outlives its wait keeps the future until a
-    /// later `poll` finds it ready.
+    /// later `poll` finds it ready. The sandbox polls the future only while the caller awaits
+    /// `execute` or `poll`, so work that must go on between them belongs in a task the host
+    /// spawns.
     fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>>;
 }
 
