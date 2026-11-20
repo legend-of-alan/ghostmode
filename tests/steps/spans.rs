@@ -111,15 +111,9 @@ fn span_has_no_parent(world: &mut World, name: String) {
 
 #[then(regex = r"^the (\w+) span's `(\w+)` equals the (\w+) span's$")]
 fn span_field_equals(world: &mut World, name: String, field: String, other: String) {
-    let spans = world.span_capture.spans();
-    let field_value = |name: &str| {
-        let span = spans.iter().find(|span| span.name == name);
-        let span = span.unwrap_or_else(|| panic!("no {name} span"));
-        let value = span.fields.iter().rev().find(|(key, _)| *key == field);
-        value.map(|(_, value)| value.clone())
-    };
-    let value = field_value(&name).unwrap_or_else(|| panic!("{name} has no {field}"));
-    assert_eq!(Some(value), field_value(&other));
+    let value = span_field(world, &name, &field);
+    let value = value.unwrap_or_else(|| panic!("{name} has no {field}"));
+    assert_eq!(Some(value), span_field(world, &other, &field));
 }
 
 #[then(regex = r#"^no captured span field holds "(.+)"$"#)]
@@ -131,26 +125,23 @@ fn no_field_holds(world: &mut World, text: String) {
     }
 }
 
-/// The fields of the last captured span named `name`. Panics if no span has that name.
-fn last_span_fields(world: &World, name: &str) -> Vec<(String, String)> {
+/// The last value that the last captured span named `name` recorded for `field`, if any.
+/// Panics if no span has that name.
+fn span_field(world: &World, name: &str, field: &str) -> Option<String> {
     let spans = world.span_capture.spans();
     let span = spans.into_iter().rev().find(|span| span.name == name);
-    span.unwrap_or_else(|| panic!("no {name} span")).fields
+    let fields = span.unwrap_or_else(|| panic!("no {name} span")).fields;
+    let value = fields.into_iter().rev().find(|(key, _)| key == field);
+    value.map(|(_, value)| value)
 }
 
 #[then(regex = r"^the (\w+) span's `(\w+)` is (.+)$")]
 fn span_field_is(world: &mut World, name: String, field: String, expected: String) {
-    let fields = last_span_fields(world, &name);
-    let value = fields.iter().rev().find(|(key, _)| *key == field);
-    assert_eq!(
-        value.map(|(_, value)| value.as_str()),
-        Some(expected.as_str()),
-        "{fields:?}"
-    );
+    assert_eq!(span_field(world, &name, &field), Some(expected));
 }
 
 #[then(regex = r"^the (\w+) span records a `(\w+)`$")]
 fn span_records(world: &mut World, name: String, field: String) {
-    let fields = last_span_fields(world, &name);
-    assert!(fields.iter().any(|(key, _)| *key == field), "{fields:?}");
+    let value = span_field(world, &name, &field);
+    assert!(value.is_some(), "{name} has no {field}");
 }
