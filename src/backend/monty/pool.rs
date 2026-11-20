@@ -3,19 +3,25 @@
 //!
 //! A worker that crashes takes down only itself, never the caller's process. The script's run
 //! fails with an error that says so, and the next status reports `restarted`, with no globals.
-//! The same holds when a script goes past [`Limits::memory_bytes`], which a worker enforces on
-//! its whole memory, and when the sandbox stops a run at a tool call: at
+//! The same holds when the sandbox stops a run at a tool call: at
 //! [`Limits::calls_per_execute`], [`Limits::call_timeout`] or [`Limits::idle_timeout`], or with
-//! [`Sandbox::cancel`]. A stopped run ends its worker, and the session's globals with it.
+//! [`Sandbox::cancel`]. A stopped run ends its worker, and the session's globals with it. A
+//! script that goes past [`Limits::memory_bytes`], which a worker enforces on its whole memory,
+//! often fails with `MemoryError` and leaves its worker running, and later scripts in that
+//! session can keep failing until [`Sandbox::reset`].
 //!
 //! Each session holds one worker from its first script until the session drops, as
-//! [`Sandbox::reset`] and dropping the sandbox do. Dropping a session ends its worker.
+//! [`Sandbox::reset`] and dropping the sandbox do, even while it runs nothing. Dropping a
+//! session ends its worker. The pool runs at most one worker per core, so with that many
+//! sessions holding workers, a new session's first script or a restore waits a few seconds for
+//! one to drop and then fails, saying no worker became available.
 //!
 //! [`Sandbox::cancel`]: crate::Sandbox::cancel
 //! [`Sandbox::reset`]: crate::Sandbox::reset
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{error, fmt};
 
 use monty_pool::{
@@ -30,9 +36,15 @@ use crate::backend::{Ending, Progress, Streams, sealed};
 use crate::host;
 use crate::sandbox::Limits;
 
+/// How long a new session's first script or a restore waits for a worker when every worker the
+/// pool allows is held, before it fails.
+const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Runs each session's scripts in its own worker process from a pool of `monty` workers that
-/// [`WorkerOptions`] describe. Clones share the pool's workers. Build it, and so the sandbox,
-/// inside a Tokio multi-thread runtime.
+/// [`WorkerOptions`] describe. Clones share the pool's workers, at most one per core of the
+/// machine's [available parallelism], and each open sandbox that has run a script holds one.
+/// Build it, and await every `execute`, `poll`, `cancel`, `dump` and `restore` of its sandboxes,
+/// inside a Tokio multi-thread runtime. Awaiting them outside Tokio panics.
 ///
 /// ```no_run
 /// use ghostmode::backend::{MontyPool, WorkerOptions};
@@ -48,6 +60,8 @@ use crate::sandbox::Limits;
 /// The worker runs the script, but the thread that polls `execute` or `poll` still converts
 /// values between JSON and Python and cuts output to [`Limits::output_chars`]. The thread that
 /// polls `Builder::restore` checks a dump's signature.
+///
+/// [available parallelism]: std::thread::available_parallelism
 #[derive(Clone)]
 pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
 
@@ -61,7 +75,8 @@ pub struct WorkerOptions {
     pub binary_path: PathBuf,
     /// How many workers the pool keeps running, counting the ones that open sessions hold. With
     /// one session open and `min_workers` at 1, a new session's first script or a restore
-    /// starts a new worker. The default is 1.
+    /// starts a new worker. The pool never runs more workers than the machine has cores, however
+    /// high this is. The default is 1.
     pub min_workers: usize,
 }
 
@@ -115,14 +130,16 @@ impl WorkerOptions {
 
 impl MontyPool {
     /// A backend whose sessions each check out one of the workers that `options` describe. It
-    /// starts [`WorkerOptions::min_workers`] workers before it returns. It fails if a worker
+    /// starts [`WorkerOptions::min_workers`] workers before it returns. It fails if one of those
     /// can't start from [`WorkerOptions::binary_path`], or if `min_workers` is more than the pool
-    /// allows, which is the machine's [available parallelism].
+    /// allows, which is the machine's [available parallelism]. With `min_workers` at 0 it starts
+    /// none, so a bad `binary_path` fails each session's first script instead.
     ///
     /// [available parallelism]: std::thread::available_parallelism
     pub async fn new(options: WorkerOptions) -> Result<Self, Box<dyn error::Error + Send + Sync>> {
         let config = PoolConfig {
             min_processes: options.min_workers,
+            checkout_timeout: Some(CHECKOUT_TIMEOUT),
             ..PoolConfig::subprocess(options.binary_path)
         };
         Ok(Self(Arc::new(Pool::new(config).await?)))

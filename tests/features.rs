@@ -43,6 +43,9 @@ struct World {
     /// The backend this pass runs the scenario against.
     backend: TestBackend,
     sandbox: Option<Box<dyn AnySandbox>>,
+    /// Sandboxes other than the scenario's, each holding a monty-pool worker.
+    #[cfg(feature = "monty-pool")]
+    other_sandboxes: Vec<Box<dyn AnySandbox>>,
     status: serde_json::Value,
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,

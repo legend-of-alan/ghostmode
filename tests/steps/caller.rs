@@ -53,6 +53,11 @@ async fn reset_sandbox(world: &mut World) {
     world.send(Request::Reset).await;
 }
 
+#[when("the caller drops the sandbox")]
+fn drop_sandbox(world: &mut World) {
+    world.sandbox.take().expect("a sandbox");
+}
+
 #[when("the caller dumps the sandbox")]
 async fn dump_sandbox(world: &mut World) {
     world.send(Request::Dump).await;
