@@ -28,7 +28,7 @@ The script runs inside your process. The model only gets the last 500 characters
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two function definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
@@ -39,7 +39,7 @@ What it takes: give a `Sandbox` your tools, or point it at an MCP server, and ha
 
 Here's who's who. Everything except the model and any MCP server lives in the caller's process.
 
-- **The model** is the LLM. It runs at the model provider, never runs code, and only sees two tool definitions, `execute` and `poll`.
+- **The model** is the LLM. It runs at the model provider, never runs code, and only sees two function definitions, `execute` and `poll`.
 - **The caller** is your app, the agent loop. It owns a `Sandbox`, passes each `execute` or `poll` call from the model into it, and sends the `Status` JSON back.
 - **The `Sandbox`** is a Ghost Mode library object in the caller's process. No separate service.
 - **The script** is the Python the model wrote.
@@ -56,7 +56,7 @@ Write a host, build a `Sandbox`, and give the model the `execute` and `poll` def
 
 ```rust
 use futures_util::future::{BoxFuture, FutureExt};
-use ghostmode::host::{Call, Error, Host, Tool};
+use ghostmode::host::{self, Call, Host, Tool};
 use ghostmode::{schema, Sandbox};
 use serde_json::{json, Value};
 
@@ -75,16 +75,16 @@ impl Host for Echo {
         }]
     }
 
-    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>> {
-        let text = call.args.get("text").cloned().ok_or_else(|| Error::Failed("text is required".into()));
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
+        let text = call.args.get("text").cloned().ok_or_else(|| host::Error::Failed("text is required".into()));
         async move { text }.boxed()
     }
 }
 
 let host = Echo;
-let tools = schema::list_mcp_tools(&host.tools());
+let definitions = schema::list_mcp_tools(&host.tools());
 let mut sandbox = Sandbox::builder(host).build().await;
-// Hand `tools` to the model. When it calls execute, run the code and send the Status JSON back.
+// Hand `definitions` to the model. When it calls execute, run the code and send the Status JSON back.
 let status = sandbox.execute("echo(text='hello')", false).await;
 let reply = serde_json::to_value(&status).unwrap();
 ```

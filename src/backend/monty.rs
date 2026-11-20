@@ -19,7 +19,8 @@ mod in_process;
 mod pool;
 mod value;
 
-/// The name each session gives its scripts.
+/// The file name of each session itself, such as in its `__file__` and its dumps. A traceback
+/// names each script `<python-input-N>` instead, counting from 0.
 const SCRIPT_NAME: &str = "script.py";
 
 /// The error text for restoring a dump that holds a suspended or one-shot run, not an idle

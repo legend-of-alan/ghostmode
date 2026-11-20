@@ -79,7 +79,7 @@ Default to the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/
 12. Prefer a typed unit such as `Duration`, which carries its own unit. A bare number carries the unit as a suffix, such as `_secs` or `_bytes`.
 13. Name a module after the protocol or job it handles, never a metaphor.
 14. End a stream with `None` and report a failure with `Err`. Don't add `Eof` or `Unreadable` variants for them.
-15. A name that mirrors a tool or wire name uses that exact name, so the `execute` and `poll` tools keep those names in code.
+15. A name that mirrors a tool or wire name uses that exact name, so the `execute` and `poll` functions keep those names in code.
 16. Use one word per concept across docs, code and the tools' JSON.
 17. An identifier is `id` or ends in `_id`, whatever type backs it. `name` is only ever text a person reads. A map, set or lookup is keyed by id, never by name. An outside format's keys keep their spelling, such as the `name` that OpenAI and MCP tool calls use for a tool's id.
 18. Every lifetime, single or one of several, has a name of at most 3 letters that says what it borrows, such as `'de` for deserializer input. Generic `'a` and `'b` are for non-specific wrappers such as a collection or a plain borrow. Names that std or well-known crates already use keep their spelling even if they are longer (`'static`, and `'scope` and `'env` from `std::thread::scope`). A single type parameter is `T`, or a usual letter (`K`/`V` for a map key and value, `E` for an error, `F` for a closure, `I` for an iterator). Several type parameters, or one whose meaning is not obvious, get a short meaningful name.

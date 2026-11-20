@@ -101,7 +101,7 @@ fn id_is_python_identifier(_world: &mut World, id: String, negation: String) {
     );
 }
 
-/// The description of the `execute` tool that `list_mcp_tools` lists for the scenario's host.
+/// The description of `execute` that `list_mcp_tools` lists for the scenario's host.
 fn execute_description(world: &World) -> String {
     let tools = schema::list_mcp_tools(&world.host.tools());
     let execute = tools.iter().find(|tool| tool["name"] == "execute");

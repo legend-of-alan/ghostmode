@@ -301,7 +301,7 @@ impl Suspension {
 }
 
 /// The worker session settings that stop a script at `limits`' run time, memory and recursion
-/// depth, name the script [`SCRIPT_NAME`] and return from `time.sleep` at once.
+/// depth, name the session [`SCRIPT_NAME`] and return from `time.sleep` at once.
 fn to_repl_config(limits: &Limits) -> ReplConfig {
     ReplConfig {
         script_name: SCRIPT_NAME.to_string(),

@@ -4,8 +4,8 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-/// The caller's side of the sandbox: it lists the tools a script may call and answers each
-/// call, normally by forwarding it to an MCP server's tools.
+/// The tools a script may call, and the answers to its calls. The host lives in the caller's
+/// process.
 pub trait Host {
     /// The tools a script may call, by id.
     fn tools(&self) -> Vec<Tool>;

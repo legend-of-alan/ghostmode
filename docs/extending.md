@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::future::{self, BoxFuture, FutureExt};
 use ghostmode::Sandbox;
-use ghostmode::host::{Call, Error, Host, Tool};
+use ghostmode::host::{self, Call, Host, Tool};
 use serde_json::{Value, json};
 
 struct Notes {
@@ -84,18 +84,18 @@ impl Host for Notes {
         ]
     }
 
-    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>> {
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
         let answer = match call.tool_id.as_str() {
-            "add_note" if self.read_only => Err(Error::Refused("notes are read-only".into())),
+            "add_note" if self.read_only => Err(host::Error::Refused("notes are read-only".into())),
             "add_note" => match call.args.get("text").and_then(Value::as_str) {
                 Some(text) => {
                     self.notes.lock().unwrap().push(text.to_string());
                     Ok(Value::Null)
                 }
-                None => Err(Error::Failed("text must be a string".into())),
+                None => Err(host::Error::Failed("text must be a string".into())),
             },
             "list_notes" => Ok(json!(*self.notes.lock().unwrap())),
-            other => Err(Error::Failed(format!("no tool has the id {other}"))),
+            other => Err(host::Error::Failed(format!("no tool has the id {other}"))),
         };
         future::ready(answer).boxed()
     }
