@@ -59,30 +59,33 @@ pub(crate) fn to_json(value: ObjectRef<'_>) -> Value {
 }
 
 /// The Python value a script sees for a JSON value, built in one arena.
-pub(crate) fn from_json(value: &Value) -> MontyObject {
+pub(crate) fn from_json(value: Value) -> MontyObject {
     let mut graph = MontyGraph::new();
     let root = push_json(value, &mut graph);
     unstable::object_from_graph(graph, root).expect("push_json returns the id of a node it pushed")
 }
 
 /// Pushes a JSON value's nodes onto `graph`, children first, and returns the id of its root.
-fn push_json(value: &Value, graph: &mut MontyGraph) -> NodeId {
+fn push_json(value: Value, graph: &mut MontyGraph) -> NodeId {
     let node = match value {
         Value::Null => MontyNode::None,
-        Value::Bool(value) => MontyNode::Bool(*value),
+        Value::Bool(value) => MontyNode::Bool(value),
         Value::Number(number) => match number.as_i64() {
             Some(int) => MontyNode::Int(int),
             None => MontyNode::Float(number.as_f64().unwrap_or(f64::NAN)),
         },
-        Value::String(text) => MontyNode::String(text.clone()),
-        Value::Array(items) => {
-            MontyNode::List(items.iter().map(|item| push_json(item, graph)).collect())
-        }
+        Value::String(text) => MontyNode::String(text),
+        Value::Array(items) => MontyNode::List(
+            items
+                .into_iter()
+                .map(|item| push_json(item, graph))
+                .collect(),
+        ),
         Value::Object(object) => MontyNode::Dict(
             object
-                .iter()
+                .into_iter()
                 .map(|(key, value)| {
-                    let key = graph.push(MontyNode::String(key.clone()));
+                    let key = graph.push(MontyNode::String(key));
                     (key, push_json(value, graph))
                 })
                 .collect(),

@@ -245,7 +245,7 @@ impl Backend for MontyPool {
         tool_ids: &[String],
     ) -> Progress<Self> {
         let answer = match answer {
-            Ok(answer) => ResumeValue::Return(value::from_json(&answer)),
+            Ok(answer) => ResumeValue::Return(value::from_json(answer)),
             Err(error) => ResumeValue::Error(value::to_exception(error)),
         };
         let mut on_print = print_into(&mut suspension.streams);
