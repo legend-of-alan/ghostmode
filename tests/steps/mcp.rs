@@ -19,8 +19,8 @@ enum Answer {
     ArgumentsAsStructuredContent,
     /// The call's arguments as JSON text, with no structured content.
     ArgumentsAsText,
-    /// `isError: true` with this text.
-    Error(String),
+    /// This text, with `isError` set to `is_error`.
+    Text { text: String, is_error: bool },
 }
 
 /// An in-process MCP server whose tools answer as the scenario's Given steps set up.
@@ -66,7 +66,11 @@ impl ServerHandler for TestServer {
             Answer::ArgumentsAsText => {
                 CallToolResult::success(vec![ContentBlock::text(arguments.to_string())])
             }
-            Answer::Error(text) => CallToolResult::error(vec![ContentBlock::text(text.clone())]),
+            Answer::Text { text, is_error } => {
+                let mut result = CallToolResult::success(vec![ContentBlock::text(text.clone())]);
+                result.is_error = Some(*is_error);
+                result
+            }
         };
         Ok(CallToolResponse::Complete(result))
     }
@@ -94,15 +98,16 @@ fn server_answers_structured(world: &mut World, mcp_id: String) {
 #[given(
     regex = r"^(?:an MCP server whose|the MCP server's) `(\S*)` (?:also )?answers its arguments as text$"
 )]
-fn server_answers_text(world: &mut World, mcp_id: String) {
+fn server_answers_arguments_as_text(world: &mut World, mcp_id: String) {
     let answers = &mut world.mcp.server.answers;
     answers.insert(mcp_id, Answer::ArgumentsAsText);
 }
 
-#[given(regex = r#"^an MCP server whose `(\S+)` answers the error "(.*)"$"#)]
-fn server_answers_error(world: &mut World, mcp_id: String, text: String) {
+#[given(regex = r#"^an MCP server whose `(\S+)` answers the (error|text) "(.*)"$"#)]
+fn server_answers_text(world: &mut World, mcp_id: String, error_or_text: String, text: String) {
+    let is_error = error_or_text == "error";
     let answers = &mut world.mcp.server.answers;
-    answers.insert(mcp_id, Answer::Error(text));
+    answers.insert(mcp_id, Answer::Text { text, is_error });
 }
 
 #[when("the host connects to the MCP server")]

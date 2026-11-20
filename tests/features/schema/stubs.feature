@@ -27,6 +27,19 @@ Feature: The execute description lists each host tool as a typed Python stub
       | {"type": "string", "enum": ["a", "b"]}          | Literal["a", "b"] |
       | {"description": "No type."}                     | Any               |
 
+  Scenario: Each line of a multi-line description is indented in the docstring
+    Given a host whose `search` description is:
+      """
+      Search issues.
+      Closed issues come last.
+      """
+    Then the execute description contains:
+      ```
+      def search() -> Any:
+          """Search issues.
+          Closed issues come last."""
+      ```
+
   Scenario: A description's backslashes and quotes are escaped in the docstring
     Given a host whose `find` description is "Finds a\b or """x""""
     Then the execute description contains """"Finds a\\b or \"\"\"x\"\"\"""""
@@ -41,3 +54,4 @@ Feature: The execute description lists each host tool as a typed Python stub
       | id       |
       | get-room |
       | class    |
+      | 1st      |

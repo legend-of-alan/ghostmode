@@ -8,10 +8,16 @@ Feature: An MCP client offers its server's tools to scripts
     Then the status is {"status": "finished", "value": {"city": "Oslo"}}
 
   Scenario: A tool whose name is no Python identifier is called by its id, and its JSON text is parsed
-    Given an MCP server whose `get-weather.v2` answers its arguments as text
+    Given an MCP server whose `1get-weather.v2` answers its arguments as text
     When the host connects to the MCP server
-    And the model executes get_weather_v2(city="Oslo")["city"]
+    And the model executes _get_weather_v2(city="Oslo")["city"]
     Then the status is {"status": "finished", "value": "Oslo"}
+
+  Scenario: A tool's text that isn't JSON comes back as a string
+    Given an MCP server whose `forecast` answers the text "sunny"
+    When the host connects to the MCP server
+    And the model executes forecast()
+    Then the status is {"status": "finished", "value": "sunny"}
 
   Scenario: A tool's error fails the script with the server's text
     Given an MCP server whose `broken` answers the error "no forecast today"
