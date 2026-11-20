@@ -288,7 +288,9 @@ impl Suspension {
 
     /// Ends the script by ending its worker, and gives back the session, which has no worker,
     /// and what the script printed. The next script reports that the session restarted.
+    /// Dropping the checkout kills the worker process and frees its place in the pool.
     fn kill_worker(self) -> (Session, Streams) {
+        drop(self.checkout);
         let session = Session {
             config: self.config,
             checkout: None,
