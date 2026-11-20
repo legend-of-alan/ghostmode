@@ -5,7 +5,7 @@
 //! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::MontyPool`,
 //! which runs each session in a worker process.
 
-use std::{error, fmt, mem};
+use std::{error, fmt, mem, thread};
 
 use ::monty::{Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef};
 use monty_types::{
@@ -63,10 +63,12 @@ impl sealed::Backend for Monty {
         code: &str,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        let mut streams = CollectedStreams::default();
-        let monty_progress =
-            session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tools)
+        on_script_stack(|| {
+            let mut streams = CollectedStreams::default();
+            let monty_progress =
+                session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
+            self.run(monty_progress, streams, tools)
+        })
     }
 
     async fn resume(
@@ -75,30 +77,34 @@ impl sealed::Backend for Monty {
         answer: Result<Value, host::Error>,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let answer = match answer {
-            Ok(answer) => ExtFunctionResult::Return(value::from_json(answer)),
-            Err(error) => ExtFunctionResult::Error(value::to_exception(error)),
-        };
-        let monty_progress =
-            function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tools)
+        on_script_stack(|| {
+            let Suspension {
+                function_call,
+                mut streams,
+            } = suspension;
+            let answer = value::from_answer(answer)
+                .map(ExtFunctionResult::Return)
+                .unwrap_or_else(ExtFunctionResult::Error);
+            let monty_progress =
+                function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
+            self.run(monty_progress, streams, tools)
+        })
     }
 
     async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
-        let Suspension {
-            function_call,
-            mut streams,
-        } = suspension;
-        let error = MontyException::runtime_error(message);
-        let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        match self.run(monty_progress, streams, &[]) {
-            Progress::Ended(ending) => ending,
-            Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
-        }
+        on_script_stack(|| {
+            let Suspension {
+                function_call,
+                mut streams,
+            } = suspension;
+            let error = MontyException::runtime_error(message);
+            let monty_progress =
+                function_call.abort(error, PrintWriter::collect_streams(&mut streams));
+            match self.run(monty_progress, streams, &[]) {
+                Progress::Ended(ending) => ending,
+                Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
+            }
+        })
     }
 
     async fn abandon(&self, suspension: Suspension, message: String) -> Ending<Self> {
@@ -131,6 +137,30 @@ impl sealed::Backend for Monty {
     }
 }
 
+/// How many bytes of stack in-process Monty uses to run a script and export its
+/// result.
+const SCRIPT_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+/// Runs `f` with [`SCRIPT_STACK_BYTES`] of stack, so exporting a script result as
+/// deep as the default recursion depth doesn't overflow.
+fn on_script_stack<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    thread::scope(|scope| {
+        match thread::Builder::new()
+            .stack_size(SCRIPT_STACK_BYTES)
+            .spawn_scoped(scope, f)
+            .expect("in-process Monty needs a stack to run a script")
+            .join()
+        {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
 impl Monty {
     /// Runs the script until it calls one of the host's tools, which are `tools`, with
     /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
@@ -154,7 +184,7 @@ impl Monty {
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
                     return Progress::Ended(Ending {
-                        result: Ok(value::to_json(value.as_ref())),
+                        result: value::to_json(value.as_ref()),
                         streams: split_streams(streams),
                         session: Session(Box::new(repl)),
                         lost_globals: false,

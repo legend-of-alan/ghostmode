@@ -159,7 +159,7 @@ impl MontyPool {
             turn = match event {
                 TurnEvent::Complete(value) => {
                     drop(on_print);
-                    return Progress::Ended(script.into_ending(Ok(value::to_json(value.as_ref()))));
+                    return Progress::Ended(script.into_ending(value::to_json(value.as_ref())));
                 }
                 TurnEvent::FunctionCall {
                     function_name,
@@ -256,10 +256,9 @@ impl sealed::Backend for MontyPool {
         answer: Result<Value, host::Error>,
         tools: &[host::Tool],
     ) -> Progress<Self> {
-        let answer = match answer {
-            Ok(answer) => ResumeValue::Return(value::from_json(answer)),
-            Err(error) => ResumeValue::Error(value::to_exception(error)),
-        };
+        let answer = value::from_answer(answer)
+            .map(ResumeValue::Return)
+            .unwrap_or_else(ResumeValue::Error);
         let mut on_print = print_into(&mut suspension.streams);
         let turn = suspension.checkout.resume(answer, &mut on_print).await;
         drop(on_print);
