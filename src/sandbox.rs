@@ -413,15 +413,19 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         Some(self.end_run(ending, answered_calls))
     }
 
-    /// Ends the suspended run if it has waited past the idle timeout and the host's answer is not
-    /// ready, and says it expired. A run whose answer is ready stays for the next wait to resume.
+    /// Ends the suspended run if it has waited past the idle timeout without an answer from the
+    /// host, and says it expired. A call past the call timeout counts as unanswered. A run whose
+    /// host answered stays for the next wait to resume.
     async fn expire_idle_run(&mut self) -> Option<Status> {
         let idle_timeout = self.builder.limits.idle_timeout?;
         if let Some(State::Suspended(run)) = &mut self.state
             && let Some(answer) = (&mut run.answer).now_or_never()
         {
+            let host_answered = answer.is_some();
             run.answer = future::ready(answer).boxed();
-            return None;
+            if host_answered {
+                return None;
+            }
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
         let message = format!("run {} expired", self.last_run_id);

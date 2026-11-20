@@ -93,6 +93,31 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
+  Scenario: A call that times out inside the idle timeout fails on the next poll
+    Given a host whose `search` answers only when told to
+    And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
+    And a sandbox whose `call_timeout` is 250 ms
+    And a sandbox whose `idle_timeout` is 30000 ms
+    When the model executes search(query="a")
+    Then the status is {"status": "running", "run_id": 1}
+    When 300 ms pass
+    And the model polls run 1
+    Then the status is failed with an error naming call timeout
+
+  @monty
+  Scenario: A run whose call timed out expires once the idle timeout passes, and the session runs on
+    Given a host whose `search` answers only when told to
+    And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
+    And a sandbox whose `call_timeout` is 250 ms
+    And a sandbox whose `idle_timeout` is 50 ms
+    When the model executes x = 1; search(query="a")
+    Then the status is {"status": "running", "run_id": 1}
+    When 300 ms pass
+    And the model executes x
+    Then the status is failed with an error naming run 1 expired
+    When the model executes x
+    Then the status is {"status": "finished", "value": 1}
+
   Scenario: A run whose host answered stays open past the idle timeout, and the next poll finishes it
     Given a host whose `search` answers only when told to
     And a sandbox whose execute wait is 10 ms and poll wait is 10 ms
