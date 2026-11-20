@@ -76,7 +76,7 @@ impl Backend for Monty {
             mut streams,
         } = suspension;
         let answer = match answer {
-            Ok(answer) => ExtFunctionResult::Return(value::from_json(&answer)),
+            Ok(answer) => ExtFunctionResult::Return(value::from_json(answer)),
             Err(error) => ExtFunctionResult::Error(value::to_exception(error)),
         };
         let monty_progress =
