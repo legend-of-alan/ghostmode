@@ -33,7 +33,7 @@ const TOOLS_NOT_AWAITABLE: &str = "tools are not awaitable";
 
 /// Monty's limits that stop a script at `limits`' run time, memory and recursion depth. They
 /// put no bound on suspensions, so only [`Limits::calls_per_execute`] limits tool calls.
-fn resource_limits(limits: &Limits) -> ResourceLimits {
+fn to_resource_limits(limits: &Limits) -> ResourceLimits {
     ResourceLimits {
         max_feed_duration: Some(limits.run_time),
         max_memory: Some(limits.memory_bytes),
@@ -44,7 +44,7 @@ fn resource_limits(limits: &Limits) -> ResourceLimits {
 }
 
 /// The OS policy under which `time.sleep` returns at once.
-fn os_policy() -> OsPolicy {
+fn build_os_policy() -> OsPolicy {
     OsPolicy {
         sleep: SleepMode::Zero,
         ..OsPolicy::default()
