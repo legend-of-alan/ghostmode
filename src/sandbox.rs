@@ -202,8 +202,8 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// past its idle timeout with no answer from the host, it expires and `execute` answers its
     /// `failed` status without running `code`. With `restart`, an idle session starts fresh
     /// before `code` runs, so the script sees no globals. A session lost to a dropped
-    /// `execute`, `poll` or `cancel` future also starts fresh, and the next finished or failed
-    /// status says `restarted`.
+    /// `execute`, `poll`, `cancel` or `dump` future also starts fresh, and the next finished or
+    /// failed status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         trace_step!("execute", async {
             if let Some(status) = self.expire_idle_run().await {
@@ -212,13 +212,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             if self.state.is_none() || (restart && matches!(self.state, Some(State::Idle(_)))) {
                 self.reset().await;
             }
-            let session = match self.state.take() {
-                Some(State::Idle(session)) => session,
-                suspended => {
-                    self.state = suspended;
-                    let run_id = self.last_run_id;
-                    return Status::failed(Error::RunOpen { run_id }.to_string());
-                }
+            let session = match self.take_session() {
+                Ok(session) => session,
+                Err(error) => return Status::failed(error.to_string()),
             };
             self.last_run_id += 1;
             Span::current()
@@ -278,28 +274,33 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
     /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
     /// [`Error::RunOpen`], and bytes the backend can't write are [`Error::Dump`]. A session lost
-    /// to a dropped `execute`, `poll` or `cancel` future starts fresh first.
+    /// to a dropped `execute`, `poll`, `cancel` or `dump` future starts fresh first.
     pub async fn dump(&mut self) -> Result<Vec<u8>, Error> {
         if self.state.is_none() {
             self.reset().await;
         }
-        match &mut self.state {
-            Some(State::Idle(session)) => {
-                let mut bytes = self
-                    .builder
-                    .backend
-                    .dump(session)
-                    .await
-                    .map_err(Error::Dump)?;
-                if let Some(key) = self.builder.signing_key {
-                    let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
-                    bytes.extend_from_slice(&tag);
-                }
-                Ok(bytes)
+        let mut session = self.take_session()?;
+        let dump = self.builder.backend.dump(&mut session).await;
+        self.state = Some(State::Idle(session));
+        let mut bytes = dump.map_err(Error::Dump)?;
+        if let Some(key) = self.builder.signing_key {
+            let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
+            bytes.extend_from_slice(&tag);
+        }
+        Ok(bytes)
+    }
+
+    /// Takes the idle session out of the sandbox, whose state stays `None` until the session is
+    /// put back. While a run is open this is [`Error::RunOpen`], and the run stays in the sandbox.
+    fn take_session(&mut self) -> Result<B::Session, Error> {
+        match self.state.take() {
+            Some(State::Idle(session)) => Ok(session),
+            suspended => {
+                self.state = suspended;
+                Err(Error::RunOpen {
+                    run_id: self.last_run_id,
+                })
             }
-            _ => Err(Error::RunOpen {
-                run_id: self.last_run_id,
-            }),
         }
     }
 

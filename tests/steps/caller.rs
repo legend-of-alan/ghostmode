@@ -28,6 +28,17 @@ async fn drop_execute(world: &mut World, code: String) {
     world.sandbox = Some(sandbox);
 }
 
+#[when("the caller stops awaiting the dump")]
+async fn drop_dump(world: &mut World) {
+    let mut sandbox = world.take_sandbox().await;
+    let reply = sandbox.reply(Request::Dump).now_or_never();
+    assert!(
+        reply.is_none(),
+        "dump answered before the caller stopped awaiting it"
+    );
+    world.sandbox = Some(sandbox);
+}
+
 #[when("the caller resets the sandbox")]
 async fn reset_sandbox(world: &mut World) {
     world.send(Request::Reset).await;
