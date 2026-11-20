@@ -1,4 +1,4 @@
-@pool
+@monty-pool
 Feature: A worker that crashes fails its run, and the session starts fresh
 
   Scenario: A crash while a tool call waits fails the run, and the next status says the session restarted

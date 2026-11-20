@@ -17,7 +17,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes "a" * (512 * 1024 * 1024)
     Then the status is failed with an error naming MemoryError
 
-  @pool
+  @monty-pool
   Scenario: A worker stops a script that grows past the memory limit a megabyte at a time
     Given a sandbox whose `memory_bytes` is 64 MiB
     When the model executes this script:
@@ -52,7 +52,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
-  @pool
+  @monty-pool
   Scenario: A call the host holds past the call timeout fails, and the worker ends with the session's globals
     Given a host whose `search` answers only when told to
     And a sandbox whose `call_timeout` is 50 ms

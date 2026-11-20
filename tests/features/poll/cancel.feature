@@ -16,7 +16,7 @@ Feature: The caller cancels a run that execute left running
     Then the status is {"status": "finished", "value": 7}
     And answering `search` finds no run waiting
 
-  @pool
+  @monty-pool
   Scenario: Cancelling the open run ends its worker with the session's globals and drops its call
     Given a host whose `search` answers only when told to
     And a sandbox whose execute wait is 100 ms and poll wait is 100 ms
