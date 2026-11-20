@@ -1,19 +1,73 @@
 //! Every code name that `AGENTS.md`, `README.md` and `docs/*.md` write in backticks is real: a
 //! `path/to/file.rs` names a file in the repository, and each part of a `module::Item` path or
-//! a CamelCase `Type` is declared in a `.rs` file or `Cargo.toml`. Plain words in backticks stay prose.
+//! a CamelCase `Type` is declared in a `.rs` file or `Cargo.toml`, as an item, a `pub` field or
+//! an enum variant. A path that starts with one of the `STD_TYPES` is left to std. Plain words in
+//! backticks stay prose.
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const ITEM_KEYWORDS: &[&str] = &[
-    "fn", "struct", "enum", "trait", "type", "const", "static", "mod",
+    "fn", "struct", "enum", "trait", "type", "const", "static", "mod", "pub",
 ];
 const MANIFEST_KEYWORDS: &[&str] = &["name"];
+const STD_TYPES: &[&str] = &["Vec", "String", "Option", "Result", "Box", "Arc"];
 
 #[test]
 fn named_code_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let (paths, declared) = collect_paths_and_names(root);
+    let mut docs = vec![root.join("AGENTS.md"), root.join("README.md")];
+    if let Ok(entries) = fs::read_dir(root.join("docs")) {
+        docs.extend(
+            entries
+                .map(|entry| entry.expect("docs/ entry").path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "md")),
+        );
+    }
+    let mut missing = Vec::new();
+    for doc in docs {
+        let text = fs::read_to_string(&doc).expect("read doc");
+        let mut in_fence = false;
+        for (number, line) in text.lines().enumerate() {
+            in_fence ^= line.trim_start().starts_with("```");
+            for code in line.split('`').skip(1).step_by(2).filter(|_| !in_fence) {
+                if let Some(problem) = describe_missing(code, &paths, &declared) {
+                    let doc = doc.strip_prefix(root).unwrap_or(&doc).display();
+                    missing.push(format!("{doc}:{}: `{code}` {problem}", number + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "docs name code that does not exist:\n{}",
+        missing.join("\n")
+    );
+}
+
+#[test]
+fn fields_variants_and_std_paths_are_real_but_typos_are_not() {
+    let (paths, declared) = collect_paths_and_names(Path::new(env!("CARGO_MANIFEST_DIR")));
+    for code in [
+        "Limits::run_time",
+        "Status::Failed",
+        "Progress::Call",
+        "Vec::new",
+    ] {
+        assert_eq!(describe_missing(code, &paths, &declared), None, "`{code}`");
+    }
+    for code in ["Limits::run_tim", "Sandbx::builder"] {
+        assert!(
+            describe_missing(code, &paths, &declared).is_some(),
+            "`{code}`"
+        );
+    }
+}
+
+/// The path of every source file under `root`, and every name those files declare.
+fn collect_paths_and_names(root: &Path) -> (Vec<String>, HashSet<String>) {
     let mut sources = vec![root.join("Cargo.toml")];
     for dir in ["src", "tests"] {
         collect_source_files(&root.join(dir), &mut sources);
@@ -46,38 +100,30 @@ fn named_code_exists() {
                 .filter(|pair| keywords.contains(&pair[0]))
                 .map(|pair| pair[1].to_string()),
         );
-    }
-
-    let mut docs = vec![root.join("AGENTS.md"), root.join("README.md")];
-    if let Ok(entries) = fs::read_dir(root.join("docs")) {
-        docs.extend(
-            entries
-                .map(|entry| entry.expect("docs/ entry").path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "md")),
-        );
-    }
-    let mut missing = Vec::new();
-    for doc in docs {
-        let text = fs::read_to_string(&doc).expect("read doc");
-        let mut in_fence = false;
-        for (number, line) in text.lines().enumerate() {
-            in_fence ^= line.trim_start().starts_with("```");
-            for code in line.split('`').skip(1).step_by(2).filter(|_| !in_fence) {
-                if let Some(problem) = describe_missing(code, &paths, &declared) {
-                    let doc = doc.strip_prefix(root).unwrap_or(&doc).display();
-                    missing.push(format!("{doc}:{}: `{code}` {problem}", number + 1));
+        let mut enum_indent = None;
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let indent = line.len() - line.trim_start().len();
+            let first_word = line
+                .trim_start()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .next();
+            match (enum_indent, first_word) {
+                (Some(open), _) if indent <= open => enum_indent = None,
+                (Some(_), Some(word)) if word.starts_with(|c: char| c.is_ascii_uppercase()) => {
+                    declared.insert(word.to_string());
                 }
+                _ => {}
+            }
+            if line.split_whitespace().any(|word| word == "enum") && line.ends_with('{') {
+                enum_indent = Some(indent);
             }
         }
     }
-    assert!(
-        missing.is_empty(),
-        "docs name code that does not exist:\n{}",
-        missing.join("\n")
-    );
+    (paths, declared)
 }
 
-/// Why `code` names nothing real, or `None` when it is real or is not a code name.
+/// Why `code` names nothing real, or `None` when it is real, is not a code name, or starts with
+/// one of the `STD_TYPES` that the crate does not declare itself.
 fn describe_missing(code: &str, paths: &[String], declared: &HashSet<String>) -> Option<String> {
     if code.ends_with(".rs") {
         let suffix = format!("/{code}");
@@ -92,7 +138,11 @@ fn describe_missing(code: &str, paths: &[String], declared: &HashSet<String>) ->
     };
     let is_camel_case = code.starts_with(|c: char| c.is_ascii_uppercase())
         && code[1..].starts_with(|c: char| c.is_ascii_lowercase());
-    if !(parts.len() > 1 || is_camel_case) || !parts.iter().all(is_identifier) {
+    let starts_with_std_type = STD_TYPES.contains(&parts[0]) && !declared.contains(parts[0]);
+    if !(parts.len() > 1 || is_camel_case)
+        || !parts.iter().all(is_identifier)
+        || starts_with_std_type
+    {
         return None;
     }
     let unknown: Vec<&str> = parts

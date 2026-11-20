@@ -29,7 +29,7 @@ sequenceDiagram
     Sandbox-->>Caller: Status, finished or failed
 ```
 
-A script can call tools many times. Each tool call adds one more round of Progress::Call, the host's answer and `resume` before the script ends with Progress::Ended.
+A script can call tools many times. Each tool call adds one more round of `Progress::Call`, the host's answer and `resume` before the script ends with `Progress::Ended`.
 
 The `Sandbox` waits for the host's answer only up to the wait set by `Builder::execute_wait`. If the wait ends first, `execute` returns a `running` status, and the run stays suspended. A later `Sandbox::poll` waits on the same answer and runs the script on from there.
 
@@ -131,7 +131,7 @@ The trait has two associated types, and both must be Send:
 It has seven methods. Each returns a future that must be Send.
 
 - `new_session(limits)` makes an empty idle session. The session must stop a script that goes past the run time, memory or recursion depth in `limits`.
-- `feed_start(session, code, tool_ids)` runs `code` in the idle session. It returns Progress::Call when the script calls one of the host's tools, whose ids are `tool_ids`, and Progress::Ended when the script ends.
+- `feed_start(session, code, tool_ids)` runs `code` in the idle session. It returns `Progress::Call` when the script calls one of the host's tools, whose ids are `tool_ids`, and `Progress::Ended` when the script ends.
 - `resume(suspension, answer, tool_ids)` gives the host's answer to the suspended call and runs on. An Ok value becomes the call's return value. A Refused error raises PermissionError, and a Failed error raises RuntimeError.
 - `abort(suspension, message, tool_ids)` ends the suspended script with a RuntimeError that carries `message`, and returns its `Ending`. The script can't catch this error.
 - `abandon(suspension)` drops the suspended script without running it further. It returns the idle session, with the globals the script set, and the `Streams` the script printed.
@@ -140,8 +140,8 @@ It has seven methods. Each returns a future that must be Send.
 
 Every `Progress` is one of two variants:
 
-- Progress::Call carries the `host::Call` and the `Suspension`. The `Sandbox` sends the call to the host and passes the answer to `resume`.
-- Progress::Ended carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the session `restarted`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
+- `Progress::Call` carries the `host::Call` and the `Suspension`. The `Sandbox` sends the call to the host and passes the answer to `resume`.
+- `Progress::Ended` carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the session `restarted`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
 
 The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`.
 
@@ -212,11 +212,11 @@ let mut sandbox = Builder::new(host, OneCall).build().await;
 
 `Sandbox::builder` only builds a `Sandbox` with `Monty`. For your own backend, use `Builder::new` with the host and the backend. The other `Builder` settings work the same.
 
-For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `run` method shows how to turn every way Monty can stop into either a Progress::Call or an answer that Monty gets at once. `MontyPool` in `src/backend/monty/pool.rs` does the same over a worker process, and shows a backend that can lose its session.
+For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `run` method shows how to turn every way Monty can stop into either a `Progress::Call` or an answer that Monty gets at once. `MontyPool` in `src/backend/monty/pool.rs` does the same over a worker process, and shows a backend that can lose its session.
 
 ### Rules for a backend
 
-- **Stop only for the host's tools.** Return Progress::Call only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name, TypeError for a positional argument and RuntimeError for an awaited tool, and it gives every OS call the no-handler answer.
+- **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name, TypeError for a positional argument and RuntimeError for an awaited tool, and it gives every OS call the no-handler answer.
 - **An `Ending` carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. A backend that loses the globals, as `MontyPool` does when its worker crashes, gives back an empty session and sets `restarted` on the next script's `Ending`, so that script's status says the session restarted. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
 - **`abort` ends the script.** The script can't catch the error, so `abort` returns an `Ending`, never a tool call. The `Sandbox` calls it when the script reaches `calls_per_execute` and when a call passes `call_timeout`.
 - **The backend enforces three limits.** `new_session` and `restore` get the `Limits`. The session stops a script at `run_time`, `memory_bytes` and `recursion_depth`. `run_time` counts only the script's own time, summed over the whole run, and not the time it waits on the host. The `Sandbox` enforces `calls_per_execute`, `call_timeout`, `idle_timeout` and `output_chars` itself.
