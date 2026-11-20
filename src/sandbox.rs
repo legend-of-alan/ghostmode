@@ -12,7 +12,7 @@ use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
-use crate::backend::{Backend, Progress, Streams};
+use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host::{self, Host};
 
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
@@ -342,9 +342,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 }
                 None => {
                     let message = format!("{} passed the call timeout", call.tool_id);
-                    self.backend
+                    let ending = self
+                        .backend
                         .abort(suspension, message, &self.tool_ids)
-                        .await
+                        .await;
+                    return self.end_run(ending, answered_calls);
                 }
             };
             if let Some(status) = self.suspend_or_end(id, answered_calls, progress).await {
@@ -359,20 +361,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         &mut self,
         id: u64,
         answered_calls: Vec<host::Call>,
-        mut progress: Progress<B>,
+        progress: Progress<B>,
     ) -> Option<Status> {
         let call_limit = self.limits.calls_per_execute;
-        if answered_calls.len() >= call_limit
-            && let Progress::Call { suspension, .. } = progress
-        {
-            let message = format!("the script reached the call limit of {call_limit}");
-            progress = self
-                .backend
-                .abort(suspension, message, &self.tool_ids)
-                .await;
-        }
-        match progress {
-            Progress::Call { call, suspension } => {
+        let ending = match progress {
+            Progress::Call { call, suspension } if answered_calls.len() < call_limit => {
                 let answer = self.call_host(id, &call);
                 self.state = Some(State::Suspended(Run {
                     id,
@@ -382,14 +375,17 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                     answer,
                     idle_since: Instant::now(),
                 }));
-                None
+                return None;
             }
-            Progress::Ended {
-                result,
-                streams,
-                session,
-            } => Some(self.end_run(session, result, answered_calls, streams)),
-        }
+            Progress::Call { suspension, .. } => {
+                let message = format!("the script reached the call limit of {call_limit}");
+                self.backend
+                    .abort(suspension, message, &self.tool_ids)
+                    .await
+            }
+            Progress::Ended(ending) => ending,
+        };
+        Some(self.end_run(ending, answered_calls))
     }
 
     /// Ends the suspended run if it has waited past the idle timeout and the host's answer is not
@@ -404,22 +400,25 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
         let (session, streams) = self.backend.abandon(run.suspension).await;
-        let error = format!("run {} expired", run.id);
-        Some(self.end_run(session, Err(error), run.answered_calls, streams))
+        let ending = Ending {
+            result: Err(format!("run {} expired", run.id)),
+            streams,
+            session,
+        };
+        Some(self.end_run(ending, run.answered_calls))
     }
 
-    /// Ends the run: `session` is idle again, and the script's result and what it printed to
-    /// stdout and stderr become the status. The result gets its share of
+    /// Ends the run: the `ending`'s session is idle again, and the script's result and what it
+    /// printed to stdout and stderr become the status. The result gets its share of
     /// [`Limits::output_chars`] against both streams together, and the two streams then share
     /// the rest. The status is `restarted` if the session started fresh since the last status
     /// that was.
-    fn end_run(
-        &mut self,
-        session: B::Session,
-        result: Result<Value, String>,
-        answered_calls: Vec<host::Call>,
-        streams: Streams,
-    ) -> Status {
+    fn end_run(&mut self, ending: Ending<B>, answered_calls: Vec<host::Call>) -> Status {
+        let Ending {
+            result,
+            streams,
+            session,
+        } = ending;
         self.state = Some(State::Idle(session));
         let result_chars = match &result {
             Ok(value) => count_chars(value),

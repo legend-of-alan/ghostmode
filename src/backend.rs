@@ -17,9 +17,9 @@ pub mod monty;
 /// tool call, by value, and its [`Progress`] hands that on.
 pub trait Backend: Sized {
     /// A Python session between scripts, holding the globals they set.
-    type Session;
+    type Session: Send;
     /// A script suspended at a tool call, with what it has printed so far.
-    type Suspension;
+    type Suspension: Send;
 
     /// An empty idle session that stops a script at `limits`' run time, memory and recursion
     /// depth.
@@ -45,13 +45,14 @@ pub trait Backend: Sized {
     ) -> impl Future<Output = Progress<Self>> + Send;
 
     /// Ends the suspended script with a `RuntimeError` carrying `message`, which the script
-    /// can't catch. `tool_ids` are the host's tool ids, as in [`Backend::feed_start`].
+    /// can't catch, and gives back how it ended. `tool_ids` are the host's tool ids, as in
+    /// [`Backend::feed_start`].
     fn abort(
         &self,
         suspension: Self::Suspension,
         message: String,
         tool_ids: &[String],
-    ) -> impl Future<Output = Progress<Self>> + Send;
+    ) -> impl Future<Output = Ending<Self>> + Send;
 
     /// Drops the suspended script without running it further, and gives back its idle session
     /// with the globals the script had set, and what it printed.
@@ -82,15 +83,18 @@ pub enum Progress<B: Backend> {
         /// The script, suspended at `call`.
         suspension: B::Suspension,
     },
-    /// The script ended with its value or its error, and the session is idle again.
-    Ended {
-        /// The value of the script's last expression, or its traceback.
-        result: Result<Value, String>,
-        /// What the script printed.
-        streams: Streams,
-        /// The idle session, with the globals the script set.
-        session: B::Session,
-    },
+    /// The script ended, and the session is idle again.
+    Ended(Ending<B>),
+}
+
+/// How a script ended, from the backend to the sandbox.
+pub struct Ending<B: Backend> {
+    /// The value of the script's last expression, or its traceback.
+    pub result: Result<Value, String>,
+    /// What the script printed.
+    pub streams: Streams,
+    /// The idle session, with the globals the script set.
+    pub session: B::Session,
 }
 
 /// What a script printed, each stream in the order it was printed.

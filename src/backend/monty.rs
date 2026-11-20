@@ -19,7 +19,7 @@ use monty_types::{
 };
 use serde_json::Value;
 
-use crate::backend::{Backend, Progress, Streams};
+use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host::{self, Host};
 use crate::sandbox::{Builder, Limits, Sandbox};
 
@@ -102,14 +102,17 @@ impl Backend for Monty {
         suspension: Suspension,
         message: String,
         tool_ids: &[String],
-    ) -> Progress<Self> {
+    ) -> Ending<Self> {
         let Suspension {
             function_call,
             mut streams,
         } = suspension;
         let error = MontyException::new(ExcType::RuntimeError, Some(message));
         let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams, tool_ids)
+        match self.run(monty_progress, streams, tool_ids) {
+            Progress::Ended(ending) => ending,
+            Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
+        }
     }
 
     async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Streams) {
@@ -155,18 +158,18 @@ impl Monty {
         loop {
             monty_progress = match monty_progress {
                 Err(failure) => {
-                    return Progress::Ended {
+                    return Progress::Ended(Ending {
                         result: Err(failure.error.to_string()),
                         streams: split_streams(streams),
                         session: Box::new(failure.repl),
-                    };
+                    });
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
-                    return Progress::Ended {
+                    return Progress::Ended(Ending {
                         result: Ok(value::to_json(value.as_ref())),
                         streams: split_streams(streams),
                         session: Box::new(repl),
-                    };
+                    });
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call))
                     if tool_ids.contains(&function_call.function_name) =>
