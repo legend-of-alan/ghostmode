@@ -13,6 +13,7 @@ use crate::schema;
 
 /// A host that wraps the MCP server at the other end of `peer`: it offers the server's tools to
 /// scripts and sends each call to the server as `tools/call`. It lists the tools once, when built.
+#[derive(Debug)]
 pub struct Server {
     peer: Peer<RoleClient>,
     tools: Vec<Tool>,

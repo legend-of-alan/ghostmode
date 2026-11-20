@@ -1,6 +1,6 @@
 Feature: With a signing key, dump signs the session and restore refuses bytes the key did not sign
 
-  Scenario: A dump restores under the key that signed it
+  Scenario: A dump restores under the key that signed it, into a sandbox whose Debug output hides the key
     Given a sandbox whose signing key is "A"
     When the model executes x = 7
     And the caller dumps the sandbox
@@ -8,6 +8,7 @@ Feature: With a signing key, dump signs the session and restore refuses bytes th
     And the caller restores the dump into a new sandbox
     And the model executes x
     Then the status is {"status": "finished", "value": 7}
+    And the sandbox's Debug output doesn't show the signing key
 
   Scenario Outline: Restore under key "A" refuses <bytes>
     Given a sandbox whose signing key is "A"

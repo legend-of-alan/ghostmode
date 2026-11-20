@@ -24,7 +24,8 @@ use crate::host::{self, Host};
 /// In-process `backend::Monty` runs the script on the thread that polls `execute` or `poll`,
 /// while `backend::MontyPool` runs it in a worker process. A wait ends only while the script
 /// waits on the host: a script that runs past it holds `execute` or `poll` until it calls a
-/// tool or ends, and [`Limits::run_time`] bounds the script's own time.
+/// tool or ends, and [`Limits::run_time`] bounds the script's own time. Its `Debug` output never
+/// shows the signing key.
 pub struct Sandbox<H, B: Backend> {
     builder: Builder<H, B>,
     /// The session, or `None` once a backend call that held it was dropped, which loses it.
@@ -39,7 +40,7 @@ pub struct Sandbox<H, B: Backend> {
 
 /// Sets up a [`Sandbox`]. Made by `Sandbox::builder` (with the `monty` feature) or [`Builder::new`].
 /// The built sandbox keeps its builder and runs with its host, backend, waits, limits and signing
-/// key.
+/// key. Its `Debug` output never shows the signing key.
 pub struct Builder<H, B> {
     host: H,
     tool_ids: Vec<String>,
@@ -644,6 +645,26 @@ impl<H: Host, B: Backend> Builder<H, B> {
             last_run_id,
             unreported_restart,
         }
+    }
+}
+
+impl<H, B: Backend> fmt::Debug for Sandbox<H, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sandbox")
+            .field("builder", &self.builder)
+            .field("last_run_id", &self.last_run_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<H, B> fmt::Debug for Builder<H, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Builder")
+            .field("tool_ids", &self.tool_ids)
+            .field("execute_wait", &self.execute_wait)
+            .field("poll_wait", &self.poll_wait)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
     }
 }
 

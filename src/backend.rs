@@ -1,6 +1,6 @@
 //! What a sandbox needs from the Python interpreter that runs its scripts.
 
-use std::error;
+use std::{error, fmt};
 
 use serde_json::Value;
 
@@ -107,6 +107,28 @@ pub struct Ending<B: Backend> {
     /// crash, so `session` is empty. The sandbox's next finished or failed status then says the
     /// session restarted.
     pub lost_globals: bool,
+}
+
+impl<B: Backend> fmt::Debug for Progress<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Call { call, .. } => f
+                .debug_struct("Call")
+                .field("call", call)
+                .finish_non_exhaustive(),
+            Self::Ended(ending) => f.debug_tuple("Ended").field(ending).finish(),
+        }
+    }
+}
+
+impl<B: Backend> fmt::Debug for Ending<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ending")
+            .field("result", &self.result)
+            .field("streams", &self.streams)
+            .field("lost_globals", &self.lost_globals)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What a script printed, each stream in the order it was printed.

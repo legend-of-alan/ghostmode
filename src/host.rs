@@ -1,5 +1,7 @@
 //! What the host provides: the tools a script calls, and the answers to those calls.
 
+use std::{error, fmt};
+
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -48,3 +50,14 @@ pub enum Error {
     /// The call ran and failed. The script sees a `RuntimeError` with this message.
     Failed(String),
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(reason) => f.write_str(reason),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+impl error::Error for Error {}

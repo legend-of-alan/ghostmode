@@ -5,7 +5,7 @@
 //! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::MontyPool`,
 //! which runs each session in a worker process.
 
-use std::{error, mem};
+use std::{error, fmt, mem};
 
 use ::monty::{Dump, MontyRepl, ReplFunctionCall, ReplProgress, ReplStartError, SessionRef};
 use monty_types::{
@@ -21,6 +21,7 @@ use crate::sandbox::Limits;
 
 /// Runs scripts in a Monty session inside the caller's process.
 /// [`Sandbox::builder`](crate::Sandbox::builder) uses it.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Monty;
 
 /// A Python session in [`Monty`], holding the globals its scripts set.
@@ -30,6 +31,20 @@ pub struct Session(Box<MontyRepl>);
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Suspension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Suspension")
+            .field("streams", &self.streams)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Backend for Monty {

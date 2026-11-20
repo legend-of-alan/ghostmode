@@ -45,5 +45,6 @@ required-features = ["monty"]
 
 # CI builds with -D warnings, so these fail the build.
 [lints.rust]
+missing_debug_implementations = "warn"
 missing_docs = "warn"
 unreachable_pub = "warn"
