@@ -1,11 +1,11 @@
-//! The model's two tools, `execute` and `poll`, with their JSON Schemas, as MCP tools and as
-//! OpenAI functions. The caller hands one of the two lists to its model.
+//! The two functions the model calls, `execute` and `poll`, with their JSON Schemas, in MCP's
+//! and OpenAI's shapes. The caller hands one of the two lists to its model.
 
 use serde_json::{Value, json};
 
 use crate::host;
 
-/// The model's `execute` and `poll` tools, in that order, in the shape MCP's `tools/list`
+/// The two functions the model calls, `execute` then `poll`, in the shape MCP's `tools/list`
 /// answers with: `{"name", "description", "inputSchema"}`. The schemas set
 /// `additionalProperties: false`, and the execute description lists each of `host_tools` whose
 /// id is a Python identifier as a typed, keyword-only Python stub.
@@ -57,7 +57,7 @@ pub fn list_mcp_tools(host_tools: &[host::Tool]) -> Vec<Value> {
     ]
 }
 
-/// The same tools as [`list_mcp_tools`], as OpenAI function tools:
+/// The same two functions as [`list_mcp_tools`], as OpenAI functions:
 /// `{"type": "function", "function": {"name", "description", "parameters"}}`.
 pub fn list_openai_functions(host_tools: &[host::Tool]) -> Vec<Value> {
     list_mcp_tools(host_tools)

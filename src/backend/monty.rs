@@ -19,12 +19,17 @@ mod in_process;
 mod pool;
 mod value;
 
-/// The name each session gives its scripts.
+/// The file name of each session itself, such as in its `__file__` and its dumps. A traceback
+/// names each script `<python-input-N>` instead, counting from 0.
 const SCRIPT_NAME: &str = "script.py";
 
 /// The error text for restoring a dump that holds a suspended or one-shot run, not an idle
 /// session.
 const DUMP_HOLDS_RUN: &str = "the dump holds a run, and ghostmode restores only an idle session";
+
+/// The error that ends a script waiting on Monty futures. A tool call hands the script a plain
+/// value, never a future, so a script that awaits a tool's answer gets `TypeError` instead.
+const TOOLS_NOT_AWAITABLE: &str = "tools are not awaitable";
 
 /// Monty's limits that stop a script at `limits`' run time, memory and recursion depth. They
 /// put no bound on suspensions, so only [`Limits::calls_per_execute`] limits tool calls.

@@ -1,4 +1,4 @@
-//! The sandbox that answers the model's `execute` and `poll` tool calls.
+//! The sandbox that answers each `execute` or `poll` call the caller passes in from the model.
 
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -82,8 +82,8 @@ pub struct Limits {
     pub output_chars: usize,
 }
 
-/// What `execute` or `poll` answers, from the sandbox to the model. It serializes as the JSON
-/// the model sees, such as `{"status": "running", "run_id": 1}`.
+/// What `execute` or `poll` answers, from the sandbox to the caller. It serializes as the JSON
+/// the caller sends to the model, such as `{"status": "running", "run_id": 1}`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Status {
@@ -111,8 +111,9 @@ pub enum Status {
     Failed {
         /// What went wrong, such as the script's traceback.
         error: String,
-        /// The tool calls the host answered before the failure. Each argument is cut to its
-        /// share of [`Limits::output_chars`], which is `output_chars / calls_per_execute`.
+        /// Every tool call the host answered in the run, refused and failed ones too. Each
+        /// argument is cut to its share of [`Limits::output_chars`], which is
+        /// `output_chars / calls_per_execute`.
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past

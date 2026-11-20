@@ -32,6 +32,14 @@ use crate::sandbox::Limits;
 /// share the pool's workers. Build it, and so the sandbox, inside the Tokio multi-thread runtime
 /// that built the pool. monty-pool starts workers with an empty environment, so give
 /// `monty_pool::PoolConfig::subprocess` the worker binary's full path.
+///
+/// The worker runs the script, but the thread that polls `execute` or `poll` still converts
+/// values between JSON and Python and cuts output to [`Limits::output_chars`]. The thread that
+/// polls `Builder::restore` checks a dump's signature.
+///
+/// The pool's `min_processes` counts the workers that open sessions hold. With one session
+/// open and `min_processes` at 1, a new session's first script or a restore starts a new
+/// worker.
 #[derive(Clone)]
 pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
 
@@ -73,8 +81,7 @@ impl MontyPool {
 
     /// Runs the script on from `turn` until it calls one of the host's tools, whose ids are
     /// `tool_ids`, with keyword arguments, or ends. Every other suspension is answered here as
-    /// `backend::Monty` answers it, except awaiting a tool, which ends the worker. What the script
-    /// prints is added to the suspension's streams.
+    /// `backend::Monty` answers it. What the script prints is added to the suspension's streams.
     async fn run(
         &self,
         mut script: Suspension,
@@ -124,7 +131,7 @@ impl MontyPool {
                 }
                 TurnEvent::ResolveFutures { .. } => {
                     drop(on_print);
-                    let message = "tools are not awaitable".to_string();
+                    let message = super::TOOLS_NOT_AWAITABLE.to_string();
                     return Progress::Ended(self.abort(script, message, tool_ids).await);
                 }
             };
@@ -301,7 +308,7 @@ impl Suspension {
 }
 
 /// The worker session settings that stop a script at `limits`' run time, memory and recursion
-/// depth, name the script [`SCRIPT_NAME`] and return from `time.sleep` at once.
+/// depth, name the session [`SCRIPT_NAME`] and return from `time.sleep` at once.
 fn to_repl_config(limits: &Limits) -> ReplConfig {
     ReplConfig {
         script_name: SCRIPT_NAME.to_string(),

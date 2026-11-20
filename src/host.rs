@@ -4,15 +4,17 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-/// The caller's side of the sandbox: it lists the tools a script may call and answers each
-/// call, normally by forwarding it to an MCP server's tools.
+/// The tools a script may call, and the answers to its calls. The host lives in the caller's
+/// process.
 pub trait Host {
     /// The tools a script may call, by id.
     fn tools(&self) -> Vec<Tool>;
 
     /// Answers one tool call from a script. The future clones what it needs from `call`. The
     /// run waits for the future, and a run that outlives its wait keeps the future until a
-    /// later `poll` finds it ready.
+    /// later `poll` finds it ready. The sandbox polls the future only while the caller awaits
+    /// `execute` or `poll`, so work that must go on between them belongs in a task the host
+    /// spawns.
     fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>>;
 }
 

@@ -62,7 +62,8 @@ impl fmt::Debug for World {
     }
 }
 
-/// One of the model's two tool calls or a call of the caller's, from a When step to the sandbox.
+/// A call of one of the two functions the model calls, or a call of the caller's, from a When
+/// step to the sandbox.
 enum Request {
     Execute { code: String, restart: bool },
     Poll(u64),

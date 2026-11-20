@@ -131,8 +131,8 @@ fn to_tool_id(mcp_id: &str) -> String {
     tool_id
 }
 
-/// The script's answer to an MCP tool call: its structured content when present, else its text,
-/// parsed as JSON when it parses. `isError: true` fails the call with the text.
+/// The host's answer from an MCP `tools/call` result: its structured content when present, else
+/// its text, parsed as JSON when it parses. `isError: true` fails the call with the text.
 fn to_answer(result: CallToolResult) -> Result<Value, host::Error> {
     let text: Vec<&str> = result
         .content

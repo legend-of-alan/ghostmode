@@ -1,5 +1,5 @@
 //! Code Mode for Rust agents. The model writes a script, ghostmode runs it in a sandbox, and
-//! the host provides the tools the script calls. The model sees two tools, `execute` and `poll`.
+//! the host provides the tools the script calls. The model calls only `execute` and `poll`.
 //!
 //! A sandbox runs scripts in a [`backend::Backend`]. The default backend, `backend::Monty`, runs
 //! them inside the caller's process. It isn't crash-isolated: a script can panic, abort or hang

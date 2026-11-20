@@ -135,8 +135,8 @@ impl Backend for Monty {
 impl Monty {
     /// Runs the script until it calls one of the host's tools, whose ids are `tool_ids`, with
     /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
-    /// raises `NameError`, an OS call gets Monty's no-handler answer, and awaiting a tool raises
-    /// `RuntimeError`. What the script prints is added to `streams`.
+    /// raises `NameError`, and an OS call gets Monty's no-handler answer. What the script prints
+    /// is added to `streams`.
     fn run(
         &self,
         mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
@@ -193,7 +193,7 @@ impl Monty {
                     os_call.resume(answer, PrintWriter::collect_streams(&mut streams))
                 }
                 Ok(ReplProgress::ResolveFutures(futures)) => {
-                    let error = MontyException::runtime_error("tools are not awaitable");
+                    let error = MontyException::runtime_error(super::TOOLS_NOT_AWAITABLE);
                     futures.abort(error, PrintWriter::collect_streams(&mut streams))
                 }
             };

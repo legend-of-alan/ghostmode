@@ -28,27 +28,16 @@ The script runs inside your process. The model only gets the last 500 characters
 
 Those are other teams' Code Mode numbers. Ghost Mode brings the same idea to Rust.
 
-What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two tool definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
+What it takes: give a `Sandbox` your tools, or point it at an MCP server, and hand the model only two function definitions, `execute` and `poll`. The Monty backend runs the script inside your process, so there's no container or extra service. The script can only reach the outside world through your tools.
 
 ## How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.png">
-  <img src="assets/how-it-works.png" alt="The model at the provider sends execute or poll to the caller. The caller passes it to the Sandbox, where Monty runs the script. Tool calls go to the host, which reaches an MCP server only if it is mcp::Server.">
+  <img src="assets/how-it-works.png" alt="The model at the model provider writes a script and sends it with execute, or asks for a run with poll. The caller, your agent loop, passes the call to the Sandbox, where Monty runs the script. Each tool call goes to the host with Host::call, and the answer goes back to the script. The caller sends the model a Status JSON with only the script's result. The host reaches an MCP server only if it is mcp::Server.">
 </picture>
 
-Here's who's who. Everything except the model and any MCP server lives in the caller's process.
-
-- **The model** is the LLM. It runs at the model provider, never runs code, and only sees two tool definitions, `execute` and `poll`.
-- **The caller** is your app, the agent loop. It owns a `Sandbox`, passes each `execute` or `poll` call from the model into it, and sends the `Status` JSON back.
-- **The `Sandbox`** is a Ghost Mode library object in the caller's process. No separate service.
-- **The script** is the Python the model wrote.
-- **Monty** is the Python interpreter that runs the script, inside the caller's process.
-- **The host** is the value you pass to `Sandbox::builder`. Its type implements `Host`, and it offers tools and answers calls to them.
-- **A tool** is one function the host offers. The script calls it like a Python function, and the `Sandbox` turns that into `Host::call`. The host can do whatever it likes to answer, network calls included.
-- **`mcp::Server`** is a ready-made host behind the `rmcp` feature. It wraps an rmcp client connection to an MCP server running somewhere else, and its tools are that server's tools.
-
-Every arrow inside the caller's process is a plain Rust function call. The only network hops are caller to model provider, and `mcp::Server` to its MCP server.
+Every arrow inside the caller's process is a plain Rust function call. The model never runs code and only sees the definitions of `execute` and `poll`. [Writing a host or a backend](docs/extending.md) names each part and follows one `execute` from start to end.
 
 ## Usage
 
@@ -56,7 +45,7 @@ Write a host, build a `Sandbox`, and give the model the `execute` and `poll` def
 
 ```rust
 use futures_util::future::{BoxFuture, FutureExt};
-use ghostmode::host::{Call, Error, Host, Tool};
+use ghostmode::host::{self, Call, Host, Tool};
 use ghostmode::{schema, Sandbox};
 use serde_json::{json, Value};
 
@@ -75,27 +64,25 @@ impl Host for Echo {
         }]
     }
 
-    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>> {
-        let text = call.args.get("text").cloned().ok_or_else(|| Error::Failed("text is required".into()));
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
+        let text = call.args.get("text").cloned().ok_or_else(|| host::Error::Failed("text is required".into()));
         async move { text }.boxed()
     }
 }
 
 let host = Echo;
-let tools = schema::list_mcp_tools(&host.tools());
+let definitions = schema::list_mcp_tools(&host.tools());
 let mut sandbox = Sandbox::builder(host).build().await;
-// Hand `tools` to the model. When it calls execute, run the code and send the Status JSON back.
+// Hand `definitions` to the model. When it calls execute, run the code and send the Status JSON back.
 let status = sandbox.execute("echo(text='hello')", false).await;
 let reply = serde_json::to_value(&status).unwrap();
 ```
 
 `schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.
 
-Monty inside your process runs the script on the thread that polls `Sandbox::execute` or `Sandbox::poll`, for up to 30 s by default, and that thread runs nothing else meanwhile. On Tokio, call `execute`, `poll`, `Sandbox::dump` and `Builder::restore` inside `spawn_blocking` or `block_in_place` so a script doesn't stall the runtime's other tasks, or use `backend::MontyPool` below.
+The default backend, `Monty`, runs the script inside your process and isn't crash-isolated. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`, which runs each session in its own worker process. On Tokio, read [Where scripts run](docs/extending.md#where-scripts-run) first.
 
-Monty inside your process isn't crash-isolated: a script, or a dump restored without a signing key, can panic, abort or hang the process. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`. It runs each session in its own `monty` worker process from monty-pool, so a crash ends only that worker, and the next status says the session restarted. It needs a Tokio multi-thread runtime.
-
-`Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Monty doesn't check dumps, so before you store them where others can write, set `Builder::signing_key`: restore then refuses bytes the key didn't sign. The tag doesn't hide what the session holds.
+`Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Before you store dumps where others can write, set `Builder::signing_key`. Restore then refuses bytes the key didn't sign.
 
 To offer tools some other way, or to run scripts in something other than Monty, see [Writing a host or a backend](docs/extending.md).
 

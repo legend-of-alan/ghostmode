@@ -5,9 +5,26 @@ A `Sandbox` works with two parts that you can replace:
 - **The host** decides which tools a script can call, and answers each call. Write one to offer your own tools. It implements the `Host` trait in `src/host.rs`.
 - **The backend** runs the script. Write one to run scripts in another interpreter or another process. It implements the `Backend` trait in `src/backend.rs`.
 
-If you only want to offer tools, you only need a host. The default backend, `Monty`, runs scripts in Monty inside the caller's process. The `monty-pool` feature adds `backend::MontyPool`, which runs each session in its own Monty worker process.
+If you only want to offer tools, you only need a host. The default backend is `Monty`, and the `monty-pool` feature adds `backend::MontyPool`. [Where scripts run](#where-scripts-run) compares them.
 
-This guide uses the same words as the README. The model is the LLM at the model provider. The caller is your app, the agent loop. The `Sandbox` is the library object in the caller's process. The script is the Python the model wrote. Monty is the Python interpreter. The host is your `Host` value, and a tool is one function the host offers.
+The README and this guide use these words:
+
+- The model is the LLM at the model provider. It never runs code and only sees the definitions of `execute` and `poll`, the two functions the model calls.
+- The caller is your app, the agent loop. It owns a `Sandbox`, passes each `execute` or `poll` call from the model into it, and sends the `Status` JSON back.
+- The `Sandbox` is a library object in the caller's process, not a separate service.
+- The script is the Python the model wrote.
+- Monty is the Python interpreter that runs the script.
+- The host is the value you pass to `Sandbox::builder` or `Builder::new`. Its type implements `Host`.
+- A tool is one function the host offers. The script calls it like a Python function, and the `Sandbox` turns the call into `Host::call`. The host can do anything to answer, network calls included.
+- `mcp::Server` is a ready-made host behind the `rmcp` feature. It wraps an rmcp client connection to an MCP server that runs somewhere else, and its tools are that server's tools.
+
+## Where scripts run
+
+`Monty` runs the script inside the caller's process, on the thread that polls `Sandbox::execute` or `Sandbox::poll`. That thread runs nothing else until the script calls a tool or ends, for up to `Limits::run_time` in total, 30 s by default. On Tokio, call `execute`, `poll`, `Sandbox::dump` and `Builder::restore` inside `spawn_blocking` or `block_in_place`, so a script doesn't stall the runtime's other tasks.
+
+`Monty` isn't crash-isolated. A script, or a dump restored without a signing key, can panic, abort or hang the caller's process.
+
+`MontyPool`, behind the `monty-pool` feature, runs each session in its own `monty` worker process from monty-pool. A crash ends only that worker, and the next status says the session restarted. It needs a Tokio multi-thread runtime. Its rustdoc says what still runs on the polling thread and how the pool counts workers.
 
 ## What happens during one execute
 
@@ -56,7 +73,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::future::{self, BoxFuture, FutureExt};
 use ghostmode::Sandbox;
-use ghostmode::host::{Call, Error, Host, Tool};
+use ghostmode::host::{self, Call, Host, Tool};
 use serde_json::{Value, json};
 
 struct Notes {
@@ -84,18 +101,18 @@ impl Host for Notes {
         ]
     }
 
-    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, Error>> {
+    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
         let answer = match call.tool_id.as_str() {
-            "add_note" if self.read_only => Err(Error::Refused("notes are read-only".into())),
+            "add_note" if self.read_only => Err(host::Error::Refused("notes are read-only".into())),
             "add_note" => match call.args.get("text").and_then(Value::as_str) {
                 Some(text) => {
                     self.notes.lock().unwrap().push(text.to_string());
                     Ok(Value::Null)
                 }
-                None => Err(Error::Failed("text must be a string".into())),
+                None => Err(host::Error::Failed("text must be a string".into())),
             },
             "list_notes" => Ok(json!(*self.notes.lock().unwrap())),
-            other => Err(Error::Failed(format!("no tool has the id {other}"))),
+            other => Err(host::Error::Failed(format!("no tool has the id {other}"))),
         };
         future::ready(answer).boxed()
     }
@@ -143,10 +160,11 @@ Every `Progress` is one of two variants:
 - `Progress::Call` carries the `host::Call` and the `Suspension`. The `Sandbox` sends the call to the host and passes the answer to `resume`.
 - `Progress::Ended` carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the session `restarted`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
 
-The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`.
+The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`. The snippet runs it with the notes host from above.
 
 ```rust
 use std::error;
+use std::sync::Arc;
 
 use ghostmode::backend::{Backend, Ending, Progress, Streams};
 use ghostmode::host::{self, Call};
@@ -207,6 +225,7 @@ impl Backend for OneCall {
     }
 }
 
+let host = Notes { notes: Arc::default(), read_only: false };
 let mut sandbox = Builder::new(host, OneCall).build().await;
 ```
 
@@ -216,7 +235,7 @@ For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `r
 
 ### Rules for a backend
 
-- **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name, TypeError for a positional argument and RuntimeError for an awaited tool, and it gives every OS call the no-handler answer.
+- **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start`, `resume` and `abort`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name and TypeError for a positional argument, and it gives every OS call the no-handler answer. A tool call hands the script a plain value, so a script that awaits one gets a TypeError such as `'dict' object can't be awaited`, and the session keeps its globals.
 - **An `Ending` carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. A backend that loses the globals, as `MontyPool` does when its worker crashes, gives back an empty session and sets `restarted` on the next script's `Ending`, so that script's status says the session restarted. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
 - **`abort` ends the script.** The script can't catch the error, so `abort` returns an `Ending`, never a tool call. The `Sandbox` calls it when the script reaches `calls_per_execute` and when a call passes `call_timeout`.
 - **The backend enforces three limits.** `new_session` and `restore` get the `Limits`. The session stops a script at `run_time`, `memory_bytes` and `recursion_depth`. `run_time` counts only the script's own time, summed over the whole run, and not the time it waits on the host. The `Sandbox` enforces `calls_per_execute`, `call_timeout`, `idle_timeout` and `output_chars` itself.

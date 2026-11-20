@@ -1,17 +1,18 @@
 flowchart LR
-    subgraph Provider["Model provider, remote"]
-        Model["The model"]
+    subgraph Provider["Model provider, over the network"]
+        Model["The model writes the script"]
     end
     subgraph App["Caller's process"]
-        Caller["Caller: agent loop"]
+        Caller["Caller: your agent loop"]
         subgraph GM["Ghost Mode Sandbox"]
-            Monty["Monty, runs the script"]
+            Monty["Monty runs the script"]
         end
-        Host["Host: your type, or mcp::Server"]
+        Host["Host: your tools, or mcp::Server"]
     end
-    MCPS["MCP server, separate process"]
-    Model -->|"tool call: execute or poll"| Caller
-    Caller -->|"Status JSON"| Model
-    Caller -->|"execute, poll"| GM
-    GM -->|"Host::call"| Host
-    Host -.->|"only if it is mcp::Server"| MCPS
+    MCPS["MCP server, over the network"]
+    Model -->|"execute with a script, or poll with a run id"| Caller
+    Caller -->|"Status JSON with only the script's result"| Model
+    Caller -->|"Sandbox::execute, Sandbox::poll"| GM
+    GM -->|"each tool call: Host::call"| Host
+    Host -->|"the answer"| GM
+    Host -.->|"mcp::Server only"| MCPS
