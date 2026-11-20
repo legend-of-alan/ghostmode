@@ -1,4 +1,5 @@
 use cucumber::{given, then, when};
+use futures::FutureExt;
 
 use crate::{Request, World};
 
@@ -10,6 +11,21 @@ async fn cancel_run(world: &mut World, run_id: u64) {
 #[then(regex = r"^cancel returns (true|false)$")]
 fn cancel_returns(world: &mut World, was_open: bool) {
     assert_eq!(world.cancel_returned, Some(was_open));
+}
+
+#[when(regex = r"^the caller stops awaiting the model's execute of (.+)$")]
+async fn drop_execute(world: &mut World, code: String) {
+    let mut sandbox = world.take_sandbox().await;
+    let request = Request::Execute {
+        code,
+        restart: false,
+    };
+    let reply = sandbox.reply(request).now_or_never();
+    assert!(
+        reply.is_none(),
+        "execute answered before the caller stopped awaiting it"
+    );
+    world.sandbox = Some(sandbox);
 }
 
 #[when("the caller resets the sandbox")]

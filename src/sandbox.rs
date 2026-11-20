@@ -21,6 +21,7 @@ pub struct Sandbox<H, B: Backend> {
     host: H,
     tool_ids: Vec<String>,
     backend: B,
+    /// The session, or `None` once a backend call that held it was dropped, which loses it.
     state: Option<State<B>>,
     last_run_id: u64,
     unreported_restart: bool,
@@ -179,7 +180,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// script that fails is a `failed` status, as is a request while another run is still
     /// running. If a run waited past its idle timeout with no answer from the host, it expires
     /// and `execute` answers its `failed` status without running `code`. With `restart`, an
-    /// idle session starts fresh before `code` runs, so the script sees no globals.
+    /// idle session starts fresh before `code` runs, so the script sees no globals. A session
+    /// lost to a dropped `execute`, `poll` or `cancel` future also starts fresh, and the next
+    /// finished or failed status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         let span = tracing::info_span!(
             "execute",
@@ -193,7 +196,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             if let Some(status) = self.expire_idle_run().await {
                 return status;
             }
-            if restart && matches!(self.state, Some(State::Idle(_))) {
+            if self.state.is_none() || (restart && matches!(self.state, Some(State::Idle(_)))) {
                 self.reset().await;
             }
             let session = match self.state.take() {
@@ -281,8 +284,12 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
 
     /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
     /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
-    /// [`Error::RunOpen`], and bytes the backend can't write are [`Error::Dump`].
+    /// [`Error::RunOpen`], and bytes the backend can't write are [`Error::Dump`]. A session lost
+    /// to a dropped `execute`, `poll` or `cancel` future starts fresh first.
     pub async fn dump(&mut self) -> Result<Vec<u8>, Error> {
+        if self.state.is_none() {
+            self.reset().await;
+        }
         match &mut self.state {
             Some(State::Idle(session)) => {
                 let mut bytes = self.backend.dump(session).await.map_err(Error::Dump)?;
@@ -310,8 +317,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     }
 
     /// Waits up to `wait` for the suspended run, answering its tool calls as the host answers
-    /// them. The run stays suspended in the sandbox while it waits, so dropping this future
-    /// loses nothing.
+    /// them. The run stays suspended in the sandbox while it waits on the host, so dropping this
+    /// future then loses nothing. Dropping it while the backend resumes or aborts the run loses
+    /// the session.
     async fn wait_timeout(&mut self, wait: Duration) -> Status {
         let mut timer = Delay::new(wait);
         loop {
