@@ -1,12 +1,12 @@
 Feature: The execute description lists each host tool as a typed Python stub
 
-  Scenario: Each tool is a keyword-only stub with its description as the docstring
-    Given a host whose `search` input schema is {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}, "after": {"type": "string"}}, "required": ["query"]}
+  Scenario: Each tool is a keyword-only stub with its description as the docstring, even with an argument named like a builtin
+    Given a host whose `search` input schema is {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}, "after": {"type": "string"}, "id": {"type": "string"}}, "required": ["query"]}
     And a host whose `search` description is "Search issues."
     And a host whose `ping` answers {}
     Then the execute description contains:
       ```
-      def search(*, query: str, after: str | None = None, limit: int | None = None) -> Any:
+      def search(*, query: str, after: str | None = None, id: str | None = None, limit: int | None = None) -> Any:
           """Search issues."""
       ```
     And the execute description contains "def ping() -> Any:"
@@ -44,14 +44,37 @@ Feature: The execute description lists each host tool as a typed Python stub
     Given a host whose `find` description is "Finds a\b or """x""""
     Then the execute description contains """"Finds a\\b or \"\"\"x\"\"\"""""
 
-  Scenario Outline: A tool whose id isn't a Python identifier gets no stub
+  Scenario Outline: A tool with an argument that can't stand in a def takes **kwargs, listed in its docstring
+    Given a host whose `lookup` input schema is {"type": "object", "properties": {"<arg>": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["<arg>"]}
+    And a host whose `lookup` description is "Looks up a user."
+    Then the execute description contains:
+      ```
+      def lookup(**kwargs: Any) -> Any:
+          """Looks up a user.
+          Keyword arguments:
+          <arg>: str
+          limit: int | None = None"""
+      ```
+    When the model executes lookup(**{"<arg>": "42"}); raise ValueError("no")
+    Then the failed status lists the calls [{"tool_id": "lookup", "args": {"<arg>": "42"}}]
+
+    Examples:
+      | arg       |
+      | user-id   |
+      | __debug__ |
+
+  Scenario Outline: A tool whose id a script can't call gets no stub
     Given a host whose `<id>` answers {}
     And a host whose `ping` answers {}
     Then the execute description contains "def ping() -> Any:"
     And the execute description doesn't contain "def <id>("
 
     Examples:
-      | id       |
-      | get-room |
-      | class    |
-      | 1st      |
+      | id                  |
+      | get-room            |
+      | class               |
+      | 1st                 |
+      | print               |
+      | len                 |
+      | open                |
+      | FrozenInstanceError |

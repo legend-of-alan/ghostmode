@@ -29,7 +29,7 @@ impl Server {
         for mcp_tool in peer.list_all_tools().await.map_err(Error::ListTools)? {
             let mcp_id = mcp_tool.name.into_owned();
             let tool_id = to_tool_id(&mcp_id);
-            if !schema::is_python_identifier(&tool_id) {
+            if !schema::is_tool_id(&tool_id) {
                 return Err(Error::UncallableId { tool_id });
             }
             if let Some(other) = mcp_ids.insert(tool_id.clone(), mcp_id.clone()) {
@@ -81,7 +81,8 @@ pub enum Error {
         /// The two tools' MCP ids.
         mcp_ids: [String; 2],
     },
-    /// An MCP tool's id isn't a Python identifier, so a script can't call it.
+    /// An MCP tool's id isn't a Python identifier, or is a Python keyword or builtin's name, so a
+    /// script can't call it.
     UncallableId {
         /// The tool's id, which is also its MCP id.
         tool_id: String,

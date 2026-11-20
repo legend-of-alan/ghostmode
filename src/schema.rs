@@ -12,7 +12,7 @@ use crate::host;
 pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
     let stubs: Vec<String> = host_tools
         .iter()
-        .filter(|tool| is_python_identifier(&tool.id))
+        .filter(|tool| is_tool_id(&tool.id))
         .map(format_stub)
         .collect();
     let execute_description = format!(
@@ -78,7 +78,9 @@ pub fn openai_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
 /// How a script calls `tool`, as a Python stub with the tool's description as its docstring:
 /// `def id(*, arg: str, opt: int | None = None) -> Any:`. The arguments are its input schema's
 /// `properties`, the `required` ones first and then the rest, each alphabetical, and the rest
-/// default to `None`. A tool with no properties is `def id() -> Any:`.
+/// default to `None`. A tool with no properties is `def id() -> Any:`. A tool with an argument
+/// that can't stand in a `def` is `def id(**kwargs: Any) -> Any:`, and its docstring lists the
+/// arguments in the same order, one per line.
 fn format_stub(tool: &host::Tool) -> String {
     let required = tool.input_schema["required"].as_array();
     let is_required = |arg: &str| required.is_some_and(|ids| ids.iter().any(|id| id == arg));
@@ -88,6 +90,7 @@ fn format_stub(tool: &host::Tool) -> String {
         .flatten()
         .collect();
     args.sort_unstable_by_key(|(arg, _)| (!is_required(arg), *arg));
+    let takes_kwargs = !args.iter().all(|(arg, _)| is_python_argument(arg));
     let args: Vec<String> = args
         .into_iter()
         .map(|(arg, arg_schema)| {
@@ -99,12 +102,16 @@ fn format_stub(tool: &host::Tool) -> String {
             }
         })
         .collect();
-    let args = if args.is_empty() {
-        String::new()
+    let (args, docstring) = if takes_kwargs {
+        let arg_lines = args.join("\n");
+        let docstring = format!("{}\nKeyword arguments:\n{arg_lines}", tool.description);
+        ("**kwargs: Any".to_owned(), docstring)
+    } else if args.is_empty() {
+        (String::new(), tool.description.clone())
     } else {
-        format!("*, {}", args.join(", "))
+        (format!("*, {}", args.join(", ")), tool.description.clone())
     };
-    let mut docstring = tool.description.replace('\\', r"\\");
+    let mut docstring = docstring.replace('\\', r"\\");
     if docstring.contains(r#"""""#) || docstring.ends_with('"') {
         docstring = docstring.replace('"', r#"\""#);
     }
@@ -153,11 +160,50 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
+/// The names a script gets without an import, from Python's builtins module and Monty's. A
+/// script that calls one gets the builtin, not a tool of the same id.
+#[rustfmt::skip]
+const PYTHON_BUILTINS: &[&str] = &[
+    "ArithmeticError", "AssertionError", "AttributeError", "BaseException", "BaseExceptionGroup",
+    "BlockingIOError", "BrokenPipeError", "BufferError", "BytesWarning", "ChildProcessError",
+    "ConnectionAbortedError", "ConnectionError", "ConnectionRefusedError", "ConnectionResetError",
+    "DeprecationWarning", "EOFError", "Ellipsis", "EncodingWarning", "EnvironmentError",
+    "Exception", "ExceptionGroup", "FileExistsError", "FileNotFoundError", "FloatingPointError",
+    "FrozenInstanceError", "FutureWarning", "GeneratorExit", "IOError", "ImportError",
+    "ImportWarning", "IndentationError", "IndexError", "InterruptedError", "IsADirectoryError",
+    "KeyError", "KeyboardInterrupt",
+    "LookupError", "MemoryError", "ModuleNotFoundError", "NameError", "NotADirectoryError",
+    "NotImplemented", "NotImplementedError", "OSError", "OverflowError",
+    "PendingDeprecationWarning", "PermissionError", "ProcessLookupError",
+    "PythonFinalizationError", "RecursionError", "ReferenceError", "ResourceWarning",
+    "RuntimeError", "RuntimeWarning", "StopAsyncIteration", "StopIteration", "SyntaxError",
+    "SyntaxWarning", "SystemError", "SystemExit", "TabError", "TimeoutError", "TypeError",
+    "UnboundLocalError", "UnicodeDecodeError", "UnicodeEncodeError", "UnicodeError",
+    "UnicodeTranslateError", "UnicodeWarning", "UserWarning", "ValueError", "Warning",
+    "WindowsError", "ZeroDivisionError", "abs", "aiter", "all", "anext", "any", "ascii", "bin",
+    "bool", "breakpoint", "bytearray", "bytes", "callable", "chr", "classmethod", "compile",
+    "complex", "copyright", "credits", "delattr", "dict", "dir", "divmod", "enumerate", "eval",
+    "exec", "exit", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr",
+    "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter", "len",
+    "license", "list", "locals", "map", "max", "memoryview", "min", "next", "object", "oct",
+    "open", "ord", "pow", "print", "property", "quit", "range", "repr", "reversed", "round", "set",
+    "setattr", "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple", "type", "vars",
+    "zip",
+];
+
 /// Whether a script can call a function named `id`: `id` is ASCII letters, digits and `_`,
-/// doesn't start with a digit, and isn't a Python keyword. A host can check its tool ids with it.
-pub fn is_python_identifier(id: &str) -> bool {
-    !id.is_empty()
-        && !id.starts_with(|c: char| c.is_ascii_digit())
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && !PYTHON_KEYWORDS.contains(&id)
+/// doesn't start with a digit, and is neither a Python keyword nor a builtin's name. A host can
+/// check its tool ids with it.
+pub fn is_tool_id(id: &str) -> bool {
+    is_python_argument(id) && !PYTHON_BUILTINS.contains(&id)
+}
+
+/// Whether `arg` can name a keyword argument in a Python `def`: `arg` is ASCII letters, digits
+/// and `_`, doesn't start with a digit, and is neither a Python keyword nor `__debug__`.
+fn is_python_argument(arg: &str) -> bool {
+    !arg.is_empty()
+        && !arg.starts_with(|c: char| c.is_ascii_digit())
+        && arg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !PYTHON_KEYWORDS.contains(&arg)
+        && arg != "__debug__"
 }
