@@ -109,7 +109,7 @@ impl Host for Notes {
 
 async fn add_and_list_notes() {
     let host = Notes { notes: Arc::default(), read_only: false };
-    let mut sandbox = Builder::new(host, Monty).build().await;
+    let mut sandbox = Builder::new(host, Monty::default()).build().await;
     let status = sandbox.execute("add_note(text='hi')\nlist_notes()", false).await;
 }
 ```

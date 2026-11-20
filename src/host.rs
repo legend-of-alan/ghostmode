@@ -68,6 +68,7 @@ impl Call {
 
 /// Why the host answered a call with no value, from the host to the script.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// The host would not run the call. The script sees a `PermissionError` with this reason.
     Refused(String),

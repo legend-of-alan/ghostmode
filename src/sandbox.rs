@@ -72,7 +72,7 @@ const HEADER_BYTES: usize = 10;
 /// limits.run_time = Duration::from_secs(5);
 /// limits.output_chars = 8_000;
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Limits {
     /// How long the script itself may run, summed over `execute` and every `poll` of its run

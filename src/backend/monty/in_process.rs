@@ -20,7 +20,10 @@ use crate::host;
 use crate::sandbox::Limits;
 
 /// Runs scripts in a Monty session inside the caller's process.
-#[derive(Clone, Copy, Debug, Default)]
+///
+/// Construct with [`Monty::default`].
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Monty;
 
 /// A Python session in [`Monty`], holding the globals its scripts set.

@@ -132,7 +132,7 @@ impl World {
         dump: Option<&[u8]>,
     ) -> Result<Box<dyn AnySandbox>, ghostmode::Error> {
         match &self.backend {
-            TestBackend::Monty => build(self.builder(Monty), dump).await,
+            TestBackend::Monty => build(self.builder(Monty::default()), dump).await,
             #[cfg(feature = "monty-pool")]
             TestBackend::MontyPool(pool) => build(self.builder(pool.clone()), dump).await,
         }
@@ -148,7 +148,7 @@ impl World {
         if let Some(wait) = self.poll_wait {
             builder = builder.poll_wait(wait);
         }
-        if let Some(limits) = self.limits {
+        if let Some(limits) = self.limits.clone() {
             builder = builder.limits(limits);
         }
         if let Some(key) = self.signing_key {
