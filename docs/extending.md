@@ -5,9 +5,26 @@ A `Sandbox` works with two parts that you can replace:
 - **The host** decides which tools a script can call, and answers each call. Write one to offer your own tools. It implements the `Host` trait in `src/host.rs`.
 - **The backend** runs the script. Write one to run scripts in another interpreter or another process. It implements the `Backend` trait in `src/backend.rs`.
 
-If you only want to offer tools, you only need a host. The default backend, `Monty`, runs scripts in Monty inside the caller's process. The `monty-pool` feature adds `backend::MontyPool`, which runs each session in its own Monty worker process.
+If you only want to offer tools, you only need a host. The default backend is `Monty`, and the `monty-pool` feature adds `backend::MontyPool`. [Where scripts run](#where-scripts-run) compares them.
 
-This guide uses the same words as the README. The model is the LLM at the model provider. The caller is your app, the agent loop. The `Sandbox` is the library object in the caller's process. The script is the Python the model wrote. Monty is the Python interpreter. The host is your `Host` value, and a tool is one function the host offers.
+The README and this guide use these words:
+
+- The model is the LLM at the model provider. It never runs code and only sees the definitions of `execute` and `poll`, the two functions the model calls.
+- The caller is your app, the agent loop. It owns a `Sandbox`, passes each `execute` or `poll` call from the model into it, and sends the `Status` JSON back.
+- The `Sandbox` is a library object in the caller's process, not a separate service.
+- The script is the Python the model wrote.
+- Monty is the Python interpreter that runs the script.
+- The host is the value you pass to `Sandbox::builder` or `Builder::new`. Its type implements `Host`.
+- A tool is one function the host offers. The script calls it like a Python function, and the `Sandbox` turns the call into `Host::call`. The host can do anything to answer, network calls included.
+- `mcp::Server` is a ready-made host behind the `rmcp` feature. It wraps an rmcp client connection to an MCP server that runs somewhere else, and its tools are that server's tools.
+
+## Where scripts run
+
+`Monty` runs the script inside the caller's process, on the thread that polls `Sandbox::execute` or `Sandbox::poll`. That thread runs nothing else until the script calls a tool or ends, for up to `Limits::run_time` in total, 30 s by default. On Tokio, call `execute`, `poll`, `Sandbox::dump` and `Builder::restore` inside `spawn_blocking` or `block_in_place`, so a script doesn't stall the runtime's other tasks.
+
+`Monty` isn't crash-isolated. A script, or a dump restored without a signing key, can panic, abort or hang the caller's process.
+
+`MontyPool`, behind the `monty-pool` feature, runs each session in its own `monty` worker process from monty-pool. A crash ends only that worker, and the next status says the session restarted. It needs a Tokio multi-thread runtime. Its rustdoc says what still runs on the polling thread and how the pool counts workers.
 
 ## What happens during one execute
 
