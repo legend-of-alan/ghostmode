@@ -28,10 +28,8 @@ mod value;
 /// The file name a script's traceback names.
 const SCRIPT_NAME: &str = "script.py";
 
-/// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] makes it.
-pub struct Monty {
-    tool_ids: Vec<String>,
-}
+/// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
+pub struct Monty;
 
 /// A script suspended at a tool call in [`Monty`], with what it has printed so far.
 pub struct Suspension {
@@ -43,8 +41,7 @@ impl<H: Host> Sandbox<H, Monty> {
     /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
     /// process.
     pub fn builder(host: H) -> Builder<H, Monty> {
-        let tool_ids = host.tools().into_iter().map(|tool| tool.id).collect();
-        Builder::new(host, Monty { tool_ids })
+        Builder::new(host, Monty)
     }
 }
 
@@ -63,17 +60,23 @@ impl Backend for Monty {
         session
     }
 
-    async fn feed_start(&self, session: Box<MontyRepl>, code: &str) -> Progress<Self> {
+    async fn feed_start(
+        &self,
+        session: Box<MontyRepl>,
+        code: &str,
+        tool_ids: &[String],
+    ) -> Progress<Self> {
         let mut streams = CollectedStreams::default();
         let monty_progress =
             session.feed_start(code, Vec::new(), PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams)
+        self.run(monty_progress, streams, tool_ids)
     }
 
     async fn resume(
         &self,
         suspension: Suspension,
         answer: Result<Value, host::Error>,
+        tool_ids: &[String],
     ) -> Progress<Self> {
         let Suspension {
             function_call,
@@ -91,17 +94,22 @@ impl Backend for Monty {
         };
         let monty_progress =
             function_call.resume(answer, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams)
+        self.run(monty_progress, streams, tool_ids)
     }
 
-    async fn abort(&self, suspension: Suspension, message: String) -> Progress<Self> {
+    async fn abort(
+        &self,
+        suspension: Suspension,
+        message: String,
+        tool_ids: &[String],
+    ) -> Progress<Self> {
         let Suspension {
             function_call,
             mut streams,
         } = suspension;
         let error = MontyException::new(ExcType::RuntimeError, Some(message));
         let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        self.run(monty_progress, streams)
+        self.run(monty_progress, streams, tool_ids)
     }
 
     async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Streams) {
@@ -134,14 +142,15 @@ impl Backend for Monty {
 }
 
 impl Monty {
-    /// Runs the script until it calls one of the host's tools with keyword arguments, or ends.
-    /// Every other suspension is answered here: an unknown name raises `NameError`, an OS call
-    /// gets Monty's no-handler answer, and awaiting a tool raises `RuntimeError`. What the script
-    /// prints is added to `streams`.
+    /// Runs the script until it calls one of the host's tools, whose ids are `tool_ids`, with
+    /// keyword arguments, or ends. Every other suspension is answered here: an unknown name
+    /// raises `NameError`, an OS call gets Monty's no-handler answer, and awaiting a tool raises
+    /// `RuntimeError`. What the script prints is added to `streams`.
     fn run(
         &self,
         mut monty_progress: Result<ReplProgress, Box<ReplStartError>>,
         mut streams: CollectedStreams,
+        tool_ids: &[String],
     ) -> Progress<Self> {
         loop {
             monty_progress = match monty_progress {
@@ -160,7 +169,7 @@ impl Monty {
                     };
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call))
-                    if self.tool_ids.contains(&function_call.function_name) =>
+                    if tool_ids.contains(&function_call.function_name) =>
                 {
                     let positional = function_call.args.args().len();
                     if positional > 0 {
