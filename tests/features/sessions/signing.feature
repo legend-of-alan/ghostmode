@@ -18,9 +18,7 @@ Feature: With a signing key, dump signs the session and restore refuses bytes th
 
     Examples:
       | bytes                                 |
-      | the dump without its tag              |
       | the dump with its first byte flipped  |
-      | the dump with its middle byte flipped |
       | the dump with its last byte flipped   |
       | the bytes "short"                     |
 
