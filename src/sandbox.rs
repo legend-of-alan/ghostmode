@@ -17,6 +17,11 @@ use crate::host::{self, Host};
 
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
+///
+/// In-process `backend::Monty` runs the script on the thread that polls `execute` or `poll`,
+/// while `backend::MontyPool` runs it in a worker process. A wait ends only while the script
+/// waits on the host: a script that runs past it holds `execute` or `poll` until it calls a
+/// tool or ends, and [`Limits::run_time`] bounds the script's own time.
 pub struct Sandbox<H, B: Backend> {
     host: H,
     tool_ids: Vec<String>,
@@ -175,14 +180,13 @@ impl Default for Limits {
 }
 
 impl<H: Host, B: Backend> Sandbox<H, B> {
-    /// Runs `code`, waiting up to the execute wait for its tool calls. The wait bounds only the
-    /// time spent waiting on the host; [`Limits::run_time`] bounds the script's own time. A
-    /// script that fails is a `failed` status, as is a request while another run is still
-    /// running. If a run waited past its idle timeout with no answer from the host, it expires
-    /// and `execute` answers its `failed` status without running `code`. With `restart`, an
-    /// idle session starts fresh before `code` runs, so the script sees no globals. A session
-    /// lost to a dropped `execute`, `poll` or `cancel` future also starts fresh, and the next
-    /// finished or failed status says `restarted`.
+    /// Runs `code`, waiting up to the execute wait for its tool calls. A script that fails is a
+    /// `failed` status, as is a request while another run is still running. If a run waited
+    /// past its idle timeout with no answer from the host, it expires and `execute` answers its
+    /// `failed` status without running `code`. With `restart`, an idle session starts fresh
+    /// before `code` runs, so the script sees no globals. A session lost to a dropped
+    /// `execute`, `poll` or `cancel` future also starts fresh, and the next finished or failed
+    /// status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         let span = tracing::info_span!(
             "execute",
@@ -229,7 +233,8 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         status
     }
 
-    /// Waits up to the poll wait for the run with `run_id` that `execute` left running.
+    /// Continues the run with `run_id` that `execute` left running, and answers `running` again
+    /// if the host still owes it an answer when the poll wait ends.
     pub async fn poll(&mut self, run_id: u64) -> Status {
         let span = tracing::info_span!(
             "poll",
@@ -526,14 +531,13 @@ impl<H: Host, B: Backend> Builder<H, B> {
         }
     }
 
-    /// How long `execute` waits for a script before it answers `running`. The default is 30 s.
+    /// How long `execute` waits on the host before it answers `running`. The default is 30 s.
     pub fn execute_wait(mut self, wait: Duration) -> Self {
         self.execute_wait = wait;
         self
     }
 
-    /// How long `poll` waits for a running script before it answers `running` again. The
-    /// default is 10 s.
+    /// How long `poll` waits on the host before it answers `running` again. The default is 10 s.
     pub fn poll_wait(mut self, wait: Duration) -> Self {
         self.poll_wait = wait;
         self
