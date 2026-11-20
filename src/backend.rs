@@ -83,7 +83,8 @@ mod sealed {
         ) -> impl Future<Output = (Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>, bool)> + Send;
 
         /// The idle session that `bytes` from [`Backend::dump`] hold, running under `limits`
-        /// like a [new session](Backend::new_session), whatever limits it was dumped with.
+        /// like a [new session](Backend::new_session). A backend may keep the limits it was
+        /// dumped with where those are stricter, as `MontyPool` does.
         fn restore(
             &self,
             bytes: &[u8],
