@@ -14,7 +14,7 @@ The README and this guide use these words:
 - The `Sandbox` is a library object in the caller's process, not a separate service.
 - The script is the Python the model wrote.
 - Monty is the Python interpreter that runs the script.
-- The host is the value you pass to `Sandbox::builder` or `Builder::new`. Its type implements `Host`.
+- The host is the value you pass to `Builder::new`, along with the backend. Its type implements `Host`.
 - A tool is one function the host offers. The script calls it like a Python function, and the `Sandbox` turns the call into `Host::call`. The host can do anything to answer, network calls included.
 - `mcp::Server` is a ready-made host behind the `rmcp` feature. It wraps an rmcp client connection to an MCP server that runs somewhere else, and its tools are that server's tools.
 
@@ -72,7 +72,8 @@ This host keeps a list of notes. It offers `add_note` and `list_notes`, and it r
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::{self, BoxFuture, FutureExt};
-use ghostmode::Sandbox;
+use ghostmode::Builder;
+use ghostmode::backend::Monty;
 use ghostmode::host::{self, Call, Host, Tool};
 use serde_json::{Value, json};
 
@@ -120,7 +121,7 @@ impl Host for Notes {
 
 async fn add_and_list_notes() {
     let host = Notes { notes: Arc::default(), read_only: false };
-    let mut sandbox = Sandbox::builder(host).build().await;
+    let mut sandbox = Builder::new(host, Monty).build().await;
     let status = sandbox.execute("add_note(text='hi')\nlist_notes()", false).await;
 }
 ```
@@ -230,8 +231,6 @@ async fn build_one_call_sandbox(host: impl Host) {
     let mut sandbox = Builder::new(host, OneCall).build().await;
 }
 ```
-
-`Sandbox::builder` only builds a `Sandbox` with `Monty`. For your own backend, use `Builder::new` with the host and the backend. The other `Builder` settings work the same.
 
 For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `run` method shows how to turn every way Monty can stop into either a `Progress::Call` or an answer that Monty gets at once. `MontyPool` in `src/backend/monty/pool.rs` does the same over a worker process, and shows a backend that can lose its session.
 

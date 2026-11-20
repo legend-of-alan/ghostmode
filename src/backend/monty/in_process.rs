@@ -20,7 +20,6 @@ use crate::host;
 use crate::sandbox::Limits;
 
 /// Runs scripts in a Monty session inside the caller's process.
-/// [`Sandbox::builder`](crate::Sandbox::builder) uses it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Monty;
 
