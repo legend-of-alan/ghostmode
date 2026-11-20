@@ -9,10 +9,10 @@ use crate::World;
 /// Fails when the test process has no `monty` worker.
 #[when("the session's monty worker is killed")]
 fn kill_session_worker(_world: &mut World) {
-    let parent = process::id().to_string();
+    let parent_id = process::id().to_string();
     let mut kill = if cfg!(windows) {
         let mut powershell = Command::new("powershell");
-        let filter = format!("Name='monty.exe' AND ParentProcessId={parent}");
+        let filter = format!("Name='monty.exe' AND ParentProcessId={parent_id}");
         let script = format!(
             "$workers = Get-CimInstance Win32_Process -Filter \"{filter}\"; \
              if (-not $workers) {{ exit 1 }}; Stop-Process -Id $workers.ProcessId -Force"
@@ -21,7 +21,7 @@ fn kill_session_worker(_world: &mut World) {
         powershell
     } else {
         let mut pkill = Command::new("pkill");
-        pkill.args(["-KILL", "-P", &parent, "-x", "monty"]);
+        pkill.args(["-KILL", "-P", &parent_id, "-x", "monty"]);
         pkill
     };
     let status = kill.status().expect("the process killer runs");
