@@ -275,10 +275,13 @@ fn main() {
     {
         println!("executor: Tokio multi-thread runtime, against monty-pool workers");
         failed |= runtime.block_on(async {
-            let config = monty_pool::PoolConfig::subprocess(find_worker_binary());
+            let config = monty_pool::PoolConfig {
+                min_processes: 0,
+                ..monty_pool::PoolConfig::subprocess(find_worker_binary())
+            };
             let workers = monty_pool::Pool::new(config)
                 .await
-                .expect("monty-pool starts the `monty` worker");
+                .expect("monty-pool takes the `monty` worker's config");
             run_scenarios(
                 true,
                 TestBackend::MontyPool(ghostmode::backend::MontyPool::new(workers)),
