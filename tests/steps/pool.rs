@@ -36,7 +36,11 @@ fn kill_session_worker(_world: &mut World) {
 async fn hold_every_worker(world: &mut World) {
     let workers = thread::available_parallelism().map_or(1, NonZero::get);
     for _ in 0..workers {
-        let mut sandbox = world.new_sandbox(None).await.expect("a new sandbox");
+        let mut sandbox = world
+            .new_sandbox(None)
+            .await
+            .map_err(|(error, _)| error)
+            .expect("a new sandbox");
         let request = Request::Execute {
             code: "pass".to_string(),
             restart: false,
