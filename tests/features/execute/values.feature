@@ -78,11 +78,11 @@ Feature: Python values come back as the JSON the model reads
       | s = 'x' * 5000000; [s] * 100    |
       | 'x' * 10485761                  |
 
-  Scenario: An int with more than 4300 digits fails before its digits are written
+  Scenario: An int with more than about 4300 digits fails
     When the model executes 1 << 15000
-    Then the status is failed with an error naming an int with more than 4300 digits
+    Then the status is failed with an error naming an int with more than about 4300 digits
 
-  Scenario: An object whose repr holds an int with more than 4300 digits fails
+  Scenario: An object whose repr holds an int with more than about 4300 digits fails
     When the model executes this script:
       """
       class A:
@@ -90,7 +90,7 @@ Feature: Python values come back as the JSON the model reads
               self.x = 1 << 15000
       A()
       """
-    Then the status is failed with an error naming an int with more than 4300 digits
+    Then the status is failed with an error naming an int with more than about 4300 digits
 
   Scenario: A tool argument that needs more than 10 MiB to convert to JSON raises in the script
     Given a host whose `search` answers {"hits": []}

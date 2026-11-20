@@ -4,7 +4,7 @@
 //! Containers become arrays or objects, an `int` too big for 64 bits becomes its digit string,
 //! and any other value, such as a float JSON can't hold, becomes its `repr`. A value fails with
 //! a plain error when it is nested more than [`MAX_VALUE_DEPTH`] levels, when it needs more
-//! than [`MAX_JSON_BYTES`] bytes to convert, when it holds an int with more than
+//! than [`MAX_JSON_BYTES`] bytes to convert, when it holds an int with more than about
 //! [`MAX_INT_DIGITS`] digits, or when two of a dict's keys become the same JSON key.
 
 use std::collections::HashSet;
@@ -80,7 +80,7 @@ pub(crate) fn from_answer(
 
 /// The JSON the model reads for a Python value, or an error if the value is nested more than
 /// [`MAX_VALUE_DEPTH`] levels, needs more than [`MAX_JSON_BYTES`] bytes to convert, holds an
-/// int with more than [`MAX_INT_DIGITS`] digits, or two of its dicts' keys become the same JSON
+/// int with more than about [`MAX_INT_DIGITS`] digits, or two of its dicts' keys become the same JSON
 /// key.
 pub(crate) fn to_json(value: ObjectRef<'_>) -> Result<Value, String> {
     let mut budget = MAX_JSON_BYTES;
@@ -120,11 +120,11 @@ impl Write for BudgetWriter<'_> {
 }
 
 /// The `repr` of `value`, taken from what is left of `budget`, or an error once it runs out or
-/// if `value` holds an int with more than [`MAX_INT_DIGITS`] digits.
+/// if `value` holds an int with more than about [`MAX_INT_DIGITS`] digits.
 fn format_repr(value: ObjectRef<'_>, budget: &mut usize) -> Result<String, String> {
     if holds_int_past_digit_limit(value) {
         return Err(format!(
-            "the value holds an int with more than {MAX_INT_DIGITS} digits"
+            "the value holds an int with more than about {MAX_INT_DIGITS} digits"
         ));
     }
     let mut repr = BudgetWriter {
@@ -135,7 +135,7 @@ fn format_repr(value: ObjectRef<'_>, budget: &mut usize) -> Result<String, Strin
     Ok(repr.text)
 }
 
-/// Whether `value`, or anything it holds, is an int with more than [`MAX_INT_DIGITS`] digits.
+/// Whether `value`, or anything it holds, is an int with more than about [`MAX_INT_DIGITS`] digits.
 /// Each object is checked once, however many times `value` holds it.
 fn holds_int_past_digit_limit(value: ObjectRef<'_>) -> bool {
     let mut seen = HashSet::new();
