@@ -154,8 +154,8 @@ const PYTHON_KEYWORDS: &[&str] = &[
 ];
 
 /// Whether a script can call a function named `id`: `id` is ASCII letters, digits and `_`,
-/// doesn't start with a digit, and isn't a Python keyword.
-pub(crate) fn is_python_identifier(id: &str) -> bool {
+/// doesn't start with a digit, and isn't a Python keyword. A host can check its tool ids with it.
+pub fn is_python_identifier(id: &str) -> bool {
     !id.is_empty()
         && !id.starts_with(|c: char| c.is_ascii_digit())
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')

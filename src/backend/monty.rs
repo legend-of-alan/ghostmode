@@ -20,8 +20,8 @@ use monty_types::{
 use serde_json::Value;
 
 use crate::backend::{Backend, Progress, Streams};
-use crate::host;
-use crate::sandbox::Limits;
+use crate::host::{self, Host};
+use crate::sandbox::{Builder, Limits, Sandbox};
 
 mod value;
 
@@ -29,14 +29,20 @@ mod value;
 const SCRIPT_NAME: &str = "script.py";
 
 /// Runs scripts in a Monty session inside the caller's process. [`Sandbox::builder`] uses it.
-///
-/// [`Sandbox::builder`]: crate::Sandbox::builder
 pub struct Monty;
 
 /// A script suspended at a tool call in [`Monty`], with what it has printed so far.
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,
+}
+
+impl<H: Host> Sandbox<H, Monty> {
+    /// A [`Builder`] for a sandbox whose scripts call `host`'s tools and run in Monty inside this
+    /// process.
+    pub fn builder(host: H) -> Builder<H, Monty> {
+        Builder::new(host, Monty)
+    }
 }
 
 impl Backend for Monty {
