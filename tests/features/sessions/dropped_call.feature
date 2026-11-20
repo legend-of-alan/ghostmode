@@ -20,7 +20,7 @@ Feature: A call the caller stops awaiting loses the session, and the next call s
     Then the status is failed with an error naming NameError
 
   Scenario: Execute after a dropped dump runs in a fresh session and says it restarted
-    When the model executes x = 1
+    When the model executes x = "a" * 4000000
     And the caller stops awaiting the dump
     And the model executes x
     Then the status is failed with an error naming NameError
