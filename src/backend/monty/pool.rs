@@ -30,8 +30,13 @@ use crate::sandbox::Limits;
 
 /// Runs each session's scripts in its own worker process from a monty-pool [`Pool`]. Clones
 /// share the pool's workers. Build it, and so the sandbox, inside the Tokio multi-thread runtime
-/// that built the pool. monty-pool starts workers with an empty environment, so give
-/// `monty_pool::PoolConfig::subprocess` the worker binary's full path.
+/// that built the pool.
+///
+/// Build the pool with [`ghostmode::backend::monty_pool`](crate::backend::monty_pool), the
+/// monty-pool version ghostmode pins. monty-pool starts workers with an empty environment, so
+/// give [`ghostmode::backend::monty_pool::PoolConfig::subprocess`] the worker binary's full path.
+///
+/// [`ghostmode::backend::monty_pool::PoolConfig::subprocess`]: crate::backend::monty_pool::PoolConfig::subprocess
 ///
 /// The worker runs the script, but the thread that polls `execute` or `poll` still converts
 /// values between JSON and Python and cuts output to [`Limits::output_chars`]. The thread that

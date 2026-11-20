@@ -11,6 +11,8 @@ use crate::sandbox::Limits;
 pub use self::monty::Monty;
 #[cfg(feature = "monty-pool")]
 pub use self::monty::MontyPool;
+#[cfg(feature = "monty-pool")]
+pub use monty_pool;
 
 mod monty;
 
