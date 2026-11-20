@@ -6,7 +6,7 @@ Feature: A worker that crashes fails its run, and the session starts fresh
     And a sandbox whose execute wait is 100 ms and poll wait is 100 ms
     When the model executes x = 1; search(query="a")
     Then the status is {"status": "running", "run_id": 1}
-    When every monty worker process is killed
+    When the session's monty worker is killed
     And `search` answers {"hits": []}
     And the model polls run 1
     Then the status is failed with an error naming worker crashed
