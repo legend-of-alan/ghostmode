@@ -115,6 +115,14 @@ fn error_is_restore(world: &mut World) {
     assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
 }
 
+#[then(regex = r"^the caller's error is a failed restore naming (.+)$")]
+fn error_is_restore_naming(world: &mut World, cause: String) {
+    let error = world.caller_error.as_ref().expect("a caller error");
+    assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&cause), "{message}");
+}
+
 #[then(regex = r"^the caller's error is that the dump is format version (\d+), not version (\d+)$")]
 fn error_is_other_format_version(world: &mut World, found: u8, expected: u8) {
     let error = world.caller_error.as_ref().expect("a caller error");

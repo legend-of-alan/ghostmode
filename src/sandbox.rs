@@ -612,8 +612,8 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
     /// this builder's limits, though `backend::MontyPool` keeps the dumped session's limits
     /// where those are stricter. Its run ids go on from the dumped sandbox's last one, and its
-    /// next finished or failed status says `restarted` if the dumped sandbox's would have. Bytes too
-    /// short to be a dump, that start with another format version, or that the backend can't
+    /// next finished or failed status says `restarted` if the dumped sandbox's would have. Bytes
+    /// too short to be a dump, that start with another format version, or that the backend can't
     /// load, are [`Error::Restore`].
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for

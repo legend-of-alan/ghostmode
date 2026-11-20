@@ -15,7 +15,7 @@ Feature: A new session on a full pool fails until another sandbox drops
     And the caller drops the sandbox
     And every monty worker is held by another sandbox
     And the caller restores the dump into a new sandbox
-    Then the caller's error is that the bytes don't restore
+    Then the caller's error is a failed restore naming no monty worker became available
     When one of the other sandboxes drops
     And the caller restores the dump into a new sandbox
     And the model executes x
