@@ -27,7 +27,12 @@ Feature: An MCP client offers its server's tools to scripts
     Then connecting fails with an error naming `get.weather`
     And connecting fails with an error naming `get-weather`
 
-  Scenario: Connecting fails naming a tool whose id is a Python keyword
-    Given an MCP server whose `class` answers its arguments as text
+  Scenario Outline: Connecting fails naming a tool whose id a script can't call
+    Given an MCP server whose `<mcp_id>` answers its arguments as text
     When the host connects to the MCP server
-    Then connecting fails with an error naming `class`
+    Then connecting fails with the error "MCP tool `<mcp_id>` is not a Python name a script can call"
+
+    Examples:
+      | mcp_id |
+      | class  |
+      |        |
