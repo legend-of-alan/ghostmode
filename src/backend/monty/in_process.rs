@@ -27,6 +27,9 @@ use crate::sandbox::Limits;
 /// [`Sandbox::builder`]: crate::Sandbox::builder
 pub struct Monty;
 
+/// A Python session in [`Monty`], holding the globals its scripts set.
+pub struct Session(Box<MontyRepl>);
+
 /// A script suspended at a tool call in [`Monty`], with what it has printed so far.
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
@@ -34,23 +37,19 @@ pub struct Suspension {
 }
 
 impl Backend for Monty {
-    type Session = Box<MontyRepl>;
+    type Session = Session;
     type Suspension = Suspension;
 
-    async fn new_session(&self, limits: &Limits) -> Box<MontyRepl> {
+    async fn new_session(&self, limits: &Limits) -> Session {
         let tracker = ResourceTracker::default();
-        let mut session = Box::new(MontyRepl::new(
-            SCRIPT_NAME,
-            tracker,
-            CompileOptions::default(),
-        ));
-        set_limits_and_os_policy(&mut session, limits);
-        session
+        let mut repl = MontyRepl::new(SCRIPT_NAME, tracker, CompileOptions::default());
+        set_limits_and_os_policy(&mut repl, limits);
+        Session(Box::new(repl))
     }
 
     async fn feed_start(
         &self,
-        session: Box<MontyRepl>,
+        Session(session): Session,
         code: &str,
         tool_ids: &[String],
     ) -> Progress<Self> {
@@ -97,14 +96,14 @@ impl Backend for Monty {
         }
     }
 
-    async fn abandon(&self, suspension: Suspension) -> (Box<MontyRepl>, Streams) {
-        let session = Box::new(suspension.function_call.into_repl());
+    async fn abandon(&self, suspension: Suspension) -> (Session, Streams) {
+        let session = Session(Box::new(suspension.function_call.into_repl()));
         (session, split_streams(suspension.streams))
     }
 
     async fn dump(
         &self,
-        session: &mut Box<MontyRepl>,
+        Session(session): &mut Session,
     ) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
         ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session)).map_err(Into::into)
     }
@@ -115,7 +114,7 @@ impl Backend for Monty {
         &self,
         bytes: &[u8],
         limits: &Limits,
-    ) -> Result<Box<MontyRepl>, Box<dyn error::Error + Send + Sync>> {
+    ) -> Result<Session, Box<dyn error::Error + Send + Sync>> {
         let ::monty::Session::Idle(mut session) = Dump::load(bytes)?.state else {
             return Err(Box::new(DumpError::Unsupported {
                 found: DUMP_VERSION,
@@ -123,7 +122,7 @@ impl Backend for Monty {
             }));
         };
         set_limits_and_os_policy(&mut session, limits);
-        Ok(session)
+        Ok(Session(session))
     }
 }
 
@@ -144,7 +143,7 @@ impl Monty {
                     return Progress::Ended(Ending {
                         result: Err(failure.error.to_string()),
                         streams: split_streams(streams),
-                        session: Box::new(failure.repl),
+                        session: Session(Box::new(failure.repl)),
                         restarted: false,
                     });
                 }
@@ -152,7 +151,7 @@ impl Monty {
                     return Progress::Ended(Ending {
                         result: Ok(value::to_json(value.as_ref())),
                         streams: split_streams(streams),
-                        session: Box::new(repl),
+                        session: Session(Box::new(repl)),
                         restarted: false,
                     });
                 }
