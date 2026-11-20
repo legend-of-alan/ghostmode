@@ -1,5 +1,5 @@
 //! The backend that runs each session's scripts in its own Monty worker process, checked out
-//! from a monty-pool [`Pool`]. Only this module talks to monty-pool.
+//! from a monty-pool pool. Only this module talks to monty-pool.
 //!
 //! A worker that crashes takes down only itself, never the caller's process. The script's run
 //! fails with an error that says so, and the next status reports `restarted`, with no globals.
@@ -15,10 +15,12 @@
 //! [`Sandbox::reset`]: crate::Sandbox::reset
 
 use std::error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use monty_pool::{
-    Checkout, Pool, PoolError, PrintFuture, ReplConfig, ResumeValue, TurnEvent, on_print_sync,
+    Checkout, Pool, PoolConfig, PoolError, PrintFuture, ReplConfig, ResumeValue, TurnEvent,
+    on_print_sync,
 };
 use monty_types::{DEFAULT_MAX_PRINT_COLLECT_BYTES, MontyException, NameLookupResult, PrintStream};
 use serde_json::Value;
@@ -28,20 +30,40 @@ use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host;
 use crate::sandbox::Limits;
 
-/// Runs each session's scripts in its own worker process from a monty-pool [`Pool`]. Clones
-/// share the pool's workers. Build it, and so the sandbox, inside the Tokio multi-thread runtime
-/// that built the pool. monty-pool starts workers with an empty environment, so give
-/// `monty_pool::PoolConfig::subprocess` the worker binary's full path.
+/// Runs each session's scripts in its own worker process from a pool of `monty` workers that
+/// [`WorkerOptions`] describe. Clones share the pool's workers. Build it, and so the sandbox,
+/// inside a Tokio multi-thread runtime.
+///
+/// ```no_run
+/// use ghostmode::backend::{MontyPool, WorkerOptions};
+///
+/// # async fn build() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let mut workers = WorkerOptions::new("/usr/local/bin/monty");
+/// workers.min_workers = 0;
+/// let backend = MontyPool::new(workers).await?;
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// The worker runs the script, but the thread that polls `execute` or `poll` still converts
 /// values between JSON and Python and cuts output to [`Limits::output_chars`]. The thread that
 /// polls `Builder::restore` checks a dump's signature.
-///
-/// The pool's `min_processes` counts the workers that open sessions hold. With one session
-/// open and `min_processes` at 1, a new session's first script or a restore starts a new
-/// worker.
 #[derive(Clone)]
 pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
+
+/// The `monty` worker processes a [`MontyPool`] starts. Build it with [`WorkerOptions::new`],
+/// then set its fields.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct WorkerOptions {
+    /// The full path of the `monty` worker binary. Workers start with an empty environment, so
+    /// a bare file name isn't looked up on `PATH`.
+    pub binary_path: PathBuf,
+    /// How many workers the pool keeps running, counting the ones that open sessions hold. With
+    /// one session open and `min_workers` at 1, a new session's first script or a restore
+    /// starts a new worker. The default is 1.
+    pub min_workers: usize,
+}
 
 /// A Python session in [`MontyPool`], whose globals live in one worker process.
 pub struct Session {
@@ -61,10 +83,27 @@ pub struct Suspension {
     restarted: bool,
 }
 
+impl WorkerOptions {
+    /// Workers started from the `monty` binary at `binary_path`, with every other setting at its
+    /// default.
+    pub fn new(binary_path: impl Into<PathBuf>) -> Self {
+        Self {
+            binary_path: binary_path.into(),
+            min_workers: 1,
+        }
+    }
+}
+
 impl MontyPool {
-    /// A backend whose sessions each check out one of `workers`' processes.
-    pub fn new(workers: Pool) -> Self {
-        Self(Arc::new(workers))
+    /// A backend whose sessions each check out one of the workers that `workers` describe. It
+    /// starts [`WorkerOptions::min_workers`] workers before it returns, and fails if
+    /// `min_workers` is more than the pool allows, which is one per CPU core.
+    pub async fn new(workers: WorkerOptions) -> Result<Self, Box<dyn error::Error + Send + Sync>> {
+        let config = PoolConfig {
+            min_processes: workers.min_workers,
+            ..PoolConfig::subprocess(workers.binary_path)
+        };
+        Ok(Self(Arc::new(Pool::new(config).await?)))
     }
 
     /// The worker in `checkout`, or a new one checked out under `config` if there is none.

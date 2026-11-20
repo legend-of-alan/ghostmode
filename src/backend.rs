@@ -10,7 +10,7 @@ use crate::sandbox::Limits;
 #[cfg(feature = "monty")]
 pub use self::monty::Monty;
 #[cfg(feature = "monty-pool")]
-pub use self::monty::MontyPool;
+pub use self::monty::{MontyPool, WorkerOptions};
 
 mod monty;
 
