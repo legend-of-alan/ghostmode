@@ -1,8 +1,6 @@
 # Contributing
 
-Contributions are issues only for now. Open an issue, and pick the form that fits.
-
-A pull request from outside this repository is closed with thanks.
+Open an issue first and pick the form that fits. A pull request closes one issue, and [Issues and PRs](#issues-and-prs) says how to title it.
 
 A contributor license agreement (CLA) and a developer certificate of origin (DCO) are deferred.
 

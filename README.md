@@ -68,7 +68,7 @@ The default build includes Monty. Add `--all-features` to also build `mcp::Serve
 
 ## Contributing
 
-For now, contributions are issues only. Open an issue and pick the form that fits. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how.
 
 ## License
 
