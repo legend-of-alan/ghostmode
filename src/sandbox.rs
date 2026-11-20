@@ -63,7 +63,17 @@ const HEADER_BYTES: usize = 10;
 /// What a script may use before the sandbox stops it with a `failed` status. A stopped script
 /// leaves the session's globals as it had set them, unless the backend lost them, which the next
 /// status reports as `restarted`.
+///
+/// Start from [`Limits::default`] and set the fields you want:
+///
+/// ```
+/// # use std::time::Duration;
+/// let mut limits = ghostmode::Limits::default();
+/// limits.run_time = Duration::from_secs(5);
+/// limits.output_chars = 8_000;
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Limits {
     /// How long the script itself may run, summed over `execute` and every `poll` of its run
     /// and not counting time spent waiting on the host. The default is 30 s.
@@ -99,6 +109,7 @@ pub struct Limits {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Status {
     /// The script ended, and this is the value of its last expression.
+    #[non_exhaustive]
     Finished {
         /// The value as JSON.
         value: Value,
@@ -119,6 +130,7 @@ pub enum Status {
         run_id: u64,
     },
     /// The script or the request failed.
+    #[non_exhaustive]
     Failed {
         /// What went wrong, such as the script's traceback.
         error: String,

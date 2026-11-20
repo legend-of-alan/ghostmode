@@ -79,21 +79,14 @@ struct Notes {
 
 impl Host for Notes {
     fn tools(&self) -> Vec<Tool> {
+        let note_schema = json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } },
+            "required": ["text"],
+        });
         vec![
-            Tool {
-                id: "add_note".into(),
-                description: "Saves a note.".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": { "text": { "type": "string" } },
-                    "required": ["text"],
-                }),
-            },
-            Tool {
-                id: "list_notes".into(),
-                description: "Returns every saved note.".into(),
-                input_schema: json!({ "type": "object" }),
-            },
+            Tool::new("add_note", "Saves a note.", note_schema),
+            Tool::new("list_notes", "Returns every saved note.", json!({ "type": "object" })),
         ]
     }
 
