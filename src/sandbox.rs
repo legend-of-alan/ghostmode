@@ -1,5 +1,6 @@
 //! The sandbox that answers the model's `execute` and `poll` tool calls.
 
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 use std::{error, fmt, mem};
 
@@ -439,10 +440,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             restarted,
         } = ending;
         self.state = Some(State::Idle(session));
-        let result_chars = match &result {
-            Ok(value) => count_chars(value),
-            Err(error) => error.chars().count(),
+        let result_text = match &result {
+            Ok(value) => to_text(value),
+            Err(error) => Cow::Borrowed(error.as_str()),
         };
+        let result_chars = result_text.chars().count();
         let Streams { stdout, stderr } = streams;
         let (stdout_chars, stderr_chars) = (stdout.chars().count(), stderr.chars().count());
         let (result_share, streams_share) = split_budget(
@@ -451,18 +453,22 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             stdout_chars + stderr_chars,
         );
         let (stdout_share, stderr_share) = split_budget(streams_share, stdout_chars, stderr_chars);
-        let stdout = (!stdout.is_empty()).then(|| cut_text(stdout, stdout_share));
-        let stderr = (!stderr.is_empty()).then(|| cut_text(stderr, stderr_share));
+        let result_cut = cut_text(&result_text, result_chars, result_share);
+        drop(result_text);
+        let stdout = (!stdout.is_empty())
+            .then(|| cut_text(&stdout, stdout_chars, stdout_share).unwrap_or(stdout));
+        let stderr = (!stderr.is_empty())
+            .then(|| cut_text(&stderr, stderr_chars, stderr_share).unwrap_or(stderr));
         let restarted = mem::take(&mut self.unreported_restart) || restarted;
         match result {
             Ok(value) => Status::Finished {
-                value: cut_value(value, result_share),
+                value: result_cut.map_or(value, Value::String),
                 stdout,
                 stderr,
                 restarted,
             },
             Err(error) => Status::Failed {
-                error: cut_text(error, result_share),
+                error: result_cut.unwrap_or(error),
                 calls: answered_calls,
                 stdout,
                 stderr,
@@ -476,7 +482,12 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     fn cut_args(&self, mut call: host::Call) -> host::Call {
         let share = self.limits.output_chars / self.limits.calls_per_execute.max(1);
         for value in call.args.values_mut() {
-            *value = cut_value(mem::take(value), share);
+            let text = to_text(value);
+            let cut = cut_text(&text, text.chars().count(), share);
+            drop(text);
+            if let Some(cut) = cut {
+                *value = Value::String(cut);
+            }
         }
         call
     }
@@ -642,37 +653,21 @@ impl Status {
     }
 }
 
-/// How many characters `value` counts for against [`Limits::output_chars`]: a string's own
-/// text, or any other value's JSON text.
-fn count_chars(value: &Value) -> usize {
+/// The text that `value` is measured by against [`Limits::output_chars`], and cut from when it
+/// doesn't fit: a string's own text, or any other value's JSON text.
+fn to_text(value: &Value) -> Cow<'_, str> {
     match value {
-        Value::String(text) => text.chars().count(),
-        other => other.to_string().chars().count(),
+        Value::String(text) => Cow::Borrowed(text),
+        other => Cow::Owned(other.to_string()),
     }
 }
 
-/// `value`, or if [`count_chars`] finds it longer than `max_chars`, its text cut by [`cut_text`]
-/// as a string.
-fn cut_value(value: Value, max_chars: usize) -> Value {
-    match value {
-        Value::String(text) => Value::String(cut_text(text, max_chars)),
-        other => {
-            let text = other.to_string();
-            if text.chars().count() <= max_chars {
-                other
-            } else {
-                Value::String(cut_text(text, max_chars))
-            }
-        }
-    }
-}
-
-/// `text`, or if it is longer than `max_chars` characters, its first and last characters, up to
-/// `max_chars` in all, around a marker such as `[… 60,000 of 100,000 characters cut …]`.
-fn cut_text(text: String, max_chars: usize) -> String {
-    let total = text.chars().count();
-    if total <= max_chars {
-        return text;
+/// `text`, which is `text_chars` characters long, cut to its first and last characters, up to
+/// `max_chars` in all, around a marker such as `[… 60,000 of 100,000 characters cut …]`. `None`
+/// if `text` already fits in `max_chars`.
+fn cut_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
+    if text_chars <= max_chars {
+        return None;
     }
     let tail_chars = max_chars / 2;
     let head_end = text
@@ -687,9 +682,11 @@ fn cut_text(text: String, max_chars: usize) -> String {
         .map_or(text.len(), |(byte, _)| byte);
     let head = &text[..head_end];
     let tail = &text[tail_start..];
-    let cut_count = group_thousands(total - max_chars);
-    let total_count = group_thousands(total);
-    format!("{head}[… {cut_count} of {total_count} characters cut …]{tail}")
+    let cut_count = group_thousands(text_chars - max_chars);
+    let total_count = group_thousands(text_chars);
+    Some(format!(
+        "{head}[… {cut_count} of {total_count} characters cut …]{tail}"
+    ))
 }
 
 /// `number` in digits with a comma between each group of three, such as `100,000`.
