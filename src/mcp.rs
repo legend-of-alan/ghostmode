@@ -71,6 +71,7 @@ impl Host for Server {
 
 /// Why `Server` could not offer the server's tools.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Listing the server's tools failed.
     ListTools(ServiceError),

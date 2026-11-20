@@ -133,6 +133,7 @@ pub enum Status {
 
 /// Why the caller's [`Sandbox::dump`] or [`Builder::restore`] failed.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// The session is held by the run with this id, which `execute` left running.
     RunOpen {
