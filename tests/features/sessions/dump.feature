@@ -51,3 +51,9 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
       | bytes      |
       | not a dump |
       | short      |
+
+  Scenario: Restoring a dump of another format version fails with a restore error naming both versions
+    When the model executes x = 7
+    And the caller dumps the sandbox
+    And the caller restores the dump with its first byte flipped into a new sandbox
+    Then the caller's error is that the dump is format version 0, not version 1

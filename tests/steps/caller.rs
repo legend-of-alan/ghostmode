@@ -99,6 +99,18 @@ fn error_is_restore(world: &mut World) {
     assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
 }
 
+#[then(regex = r"^the caller's error is that the dump is format version (\d+), not version (\d+)$")]
+fn error_is_other_format_version(world: &mut World, found: u8, expected: u8) {
+    let error = world.caller_error.as_ref().expect("a caller error");
+    assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&format!("version {found}")), "{message}");
+    assert!(
+        message.contains(&format!("version {expected}")),
+        "{message}"
+    );
+}
+
 #[then("the caller's error is that the signature doesn't match")]
 fn error_is_signature_mismatch(world: &mut World) {
     let error = world.caller_error.as_ref().expect("a caller error");
