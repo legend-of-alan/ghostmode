@@ -4,6 +4,8 @@ use cucumber::when;
 
 use crate::World;
 
+/// Kills every `monty` worker this test process started. The test pool keeps no spare worker,
+/// so the only one alive is the one running the session's script.
 #[when("every monty worker process is killed")]
 fn kill_workers(_world: &mut World) {
     let mut kill = if cfg!(windows) {
