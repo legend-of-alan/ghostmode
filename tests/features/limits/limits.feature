@@ -5,6 +5,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x = 1
     And the model executes while True: pass
     Then the status is failed with an error naming time limit exceeded
+    And the model waited at least 200 ms but under 10 seconds
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
@@ -14,7 +15,7 @@ Feature: Limits stop a script, and the session keeps its variables
 
   Scenario: One allocation over the memory limit fails
     Given a sandbox whose `memory_bytes` is 64 MiB
-    When the model executes "a" * (512 * 1024 * 1024)
+    When the model executes "a" * (128 * 1024 * 1024)
     Then the status is failed with an error naming MemoryError
 
   @monty-pool
@@ -23,7 +24,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes this script:
       """
       chunks = []
-      for i in range(300):
+      for i in range(128):
           chunks.append("a" * (1024 * 1024))
       """
     Then the status is failed with an error naming MemoryError
