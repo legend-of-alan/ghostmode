@@ -26,7 +26,7 @@ use monty_types::{DEFAULT_MAX_PRINT_COLLECT_BYTES, MontyException, NameLookupRes
 use serde_json::Value;
 
 use super::{SCRIPT_NAME, value};
-use crate::backend::{Backend, Ending, Progress, Streams};
+use crate::backend::{Ending, Progress, Sealed, Streams};
 use crate::host;
 use crate::sandbox::Limits;
 
@@ -200,7 +200,7 @@ impl MontyPool {
     }
 }
 
-impl Backend for MontyPool {
+impl Sealed for MontyPool {
     type Session = Session;
     type Suspension = Suspension;
 

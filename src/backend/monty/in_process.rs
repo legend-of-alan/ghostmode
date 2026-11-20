@@ -15,7 +15,7 @@ use monty_types::{
 use serde_json::Value;
 
 use super::{SCRIPT_NAME, value};
-use crate::backend::{Backend, Ending, Progress, Streams};
+use crate::backend::{Ending, Progress, Sealed, Streams};
 use crate::host;
 use crate::sandbox::Limits;
 
@@ -46,7 +46,7 @@ impl fmt::Debug for Suspension {
     }
 }
 
-impl Backend for Monty {
+impl Sealed for Monty {
     type Session = Session;
     type Suspension = Suspension;
 

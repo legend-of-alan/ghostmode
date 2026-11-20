@@ -37,7 +37,7 @@ What it takes: give a `Sandbox` your tools, or point it at an MCP server, and ha
   <img src="assets/how-it-works.png" alt="The model at the model provider writes a script and sends it with execute, or asks for a run with poll. The caller, your agent loop, passes the call to the Sandbox, where Monty runs the script. Each tool call goes to the host with Host::call, and the answer goes back to the script. The caller sends the model a Status JSON with only the script's result. The host reaches an MCP server only if it is mcp::Server.">
 </picture>
 
-Every arrow inside the caller's process is a plain Rust function call. The model never runs code and only sees the definitions of `execute` and `poll`. [Writing a host or a backend](docs/extending.md) names each part and follows one `execute` from start to end.
+Every arrow inside the caller's process is a plain Rust function call. The model never runs code and only sees the definitions of `execute` and `poll`. [Writing a host](docs/extending.md) names each part and follows one `execute` from start to end.
 
 ## Usage
 
@@ -54,8 +54,6 @@ The [crate docs on docs.rs](https://docs.rs/ghostmode) open with a full example:
 `Monty`, from the `monty` feature that is on by default, runs the script inside your process and isn't crash-isolated. For untrusted scripts, turn on the `monty-pool` feature and pass a `backend::MontyPool` to `Builder::new`, which runs each session in its own worker process. On Tokio, read [Where scripts run](docs/extending.md#where-scripts-run) first.
 
 `Sandbox::dump` saves an idle session as bytes, and `Builder::restore` loads them into a new sandbox. Before you store dumps where others can write, set `Builder::signing_key`. Restore then refuses bytes the key didn't sign.
-
-To offer tools some other way, or to run scripts in something other than Monty, see [Writing a host or a backend](docs/extending.md).
 
 ## Build from source
 
