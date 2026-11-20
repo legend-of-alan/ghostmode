@@ -47,13 +47,11 @@ pub trait Backend: Sized {
     ) -> impl Future<Output = Progress<Self>> + Send;
 
     /// Ends the suspended script with a `RuntimeError` carrying `message`, which the script
-    /// can't catch, and gives back how it ended. `tool_ids` are the host's tool ids, as in
-    /// [`Backend::feed_start`].
+    /// can't catch, and gives back how it ended.
     fn abort(
         &self,
         suspension: Self::Suspension,
         message: String,
-        tool_ids: &[String],
     ) -> impl Future<Output = Ending<Self>> + Send;
 
     /// Drops the suspended script without running it further, and gives back its idle session

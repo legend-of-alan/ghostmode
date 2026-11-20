@@ -84,19 +84,14 @@ impl Backend for Monty {
         self.run(monty_progress, streams, tool_ids)
     }
 
-    async fn abort(
-        &self,
-        suspension: Suspension,
-        message: String,
-        tool_ids: &[String],
-    ) -> Ending<Self> {
+    async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
         let Suspension {
             function_call,
             mut streams,
         } = suspension;
         let error = MontyException::runtime_error(message);
         let monty_progress = function_call.abort(error, PrintWriter::collect_streams(&mut streams));
-        match self.run(monty_progress, streams, tool_ids) {
+        match self.run(monty_progress, streams, &[]) {
             Progress::Ended(ending) => ending,
             Progress::Call { .. } => unreachable!("Monty's abort always ends the script"),
         }
