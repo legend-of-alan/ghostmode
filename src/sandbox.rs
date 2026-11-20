@@ -144,8 +144,8 @@ pub enum Status {
         /// Every tool call the host answered in the run, refused and failed ones too. Each
         /// call's arguments, names included, are cut to the call's share of
         /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
-        /// calls' arguments together stay within `output_chars`. Each argument in turn gets what
-        /// is left of the share, and the arguments past the share are dropped.
+        /// calls' arguments together stay within `output_chars`. Each argument, in the order of
+        /// `args`, gets what is left of the share, and the arguments past the share are dropped.
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
@@ -517,8 +517,8 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     }
 
     /// `call` with its arguments, names included, cut to its share of [`Limits::output_chars`],
-    /// which is `output_chars / calls_per_execute`. Each argument in turn gets what is left of the
-    /// share, and the arguments past the share are dropped.
+    /// which is `output_chars / calls_per_execute`. Each argument, in the order of `args`, gets
+    /// what is left of the share, and the arguments past the share are dropped.
     fn cut_args(&self, mut call: host::Call) -> host::Call {
         let limits = &self.builder.limits;
         let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
