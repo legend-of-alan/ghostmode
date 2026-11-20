@@ -17,7 +17,7 @@ const STD_TYPES: &[&str] = &["Vec", "String", "Option", "Result", "Box", "Arc"];
 #[test]
 fn named_code_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let (paths, declared) = source_paths_and_names(root);
+    let (paths, declared) = collect_paths_and_names(root);
     let mut docs = vec![root.join("AGENTS.md"), root.join("README.md")];
     if let Ok(entries) = fs::read_dir(root.join("docs")) {
         docs.extend(
@@ -49,7 +49,7 @@ fn named_code_exists() {
 
 #[test]
 fn fields_variants_and_std_paths_are_real_but_typos_are_not() {
-    let (paths, declared) = source_paths_and_names(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let (paths, declared) = collect_paths_and_names(Path::new(env!("CARGO_MANIFEST_DIR")));
     for code in [
         "Limits::run_time",
         "Status::Failed",
@@ -67,7 +67,7 @@ fn fields_variants_and_std_paths_are_real_but_typos_are_not() {
 }
 
 /// The path of every source file under `root`, and every name those files declare.
-fn source_paths_and_names(root: &Path) -> (Vec<String>, HashSet<String>) {
+fn collect_paths_and_names(root: &Path) -> (Vec<String>, HashSet<String>) {
     let mut sources = vec![root.join("Cargo.toml")];
     for dir in ["src", "tests"] {
         collect_source_files(&root.join(dir), &mut sources);
