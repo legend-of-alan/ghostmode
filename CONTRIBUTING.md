@@ -55,6 +55,7 @@ A scenario earns its place by failing when something a caller would notice chang
 - **Don't guard the past.** Don't test that a removed flag, field or behavior stays gone, and don't re-run a fixed bug's old steps to prove it stays fixed. The scenario for the new behavior already fails if the old code comes back.
 - **Leave other scenarios alone.** Don't add setup or checks to a scenario about something else just to re-test your change. Extend the scenario whose subject is your change.
 - **Assert what callers see.** Check return values, errors and what a script can observe. Don't check private fields, call counts or the order of internal steps when a visible outcome already shows the result. A refactor that keeps behavior should break no scenario.
+- **Time checks fail one way only.** A timer never fires early, so check that a timeout happened by waiting well past it. Check that it hasn't happened yet with a timeout far longer than the scenario's waits, such as 30 s against a 10 ms poll. A scenario with two timers checks after both have passed. Don't use a fake or paused clock.
 - **Plain tests only where a scenario can't reach.** A parser edge case is a good one. A parser test for an argument that doesn't exist is not.
 - **Name it for what it proves.** A scenario's name says what its steps check. If they disagree, fix one of them.
 
