@@ -145,6 +145,29 @@ fn held_call_answers(world: &mut World, tool_id: String, answer: String) {
         .expect("the run still waits");
 }
 
+#[when(regex = r"^the caller calls `(\w+)` on the host$")]
+async fn caller_calls_host(world: &mut World, tool_id: String) {
+    let call = host::Call {
+        tool_id,
+        args: serde_json::Map::new(),
+    };
+    let error = world
+        .host
+        .call(&call)
+        .await
+        .expect_err("the host answers an error");
+    world.host_error = Some(error.into());
+}
+
+#[then(regex = r#"^the host's error reads "(.*)"$"#)]
+fn host_error_reads(world: &mut World, text: String) {
+    let error = world
+        .host_error
+        .as_ref()
+        .expect("the host answered an error");
+    assert_eq!(error.to_string(), text);
+}
+
 #[then(regex = r"^answering `(\w+)` finds no run waiting$")]
 fn held_call_finds_no_run(world: &mut World, tool_id: String) {
     let sender = take_held_call(world, &tool_id);

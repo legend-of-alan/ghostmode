@@ -21,12 +21,15 @@ use crate::sandbox::Limits;
 
 /// Runs scripts in a Monty session inside the caller's process.
 /// [`Sandbox::builder`](crate::Sandbox::builder) uses it.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Monty;
 
 /// A Python session in [`Monty`], holding the globals its scripts set.
+#[derive(Debug)]
 pub struct Session(Box<MontyRepl>);
 
 /// A script suspended at a tool call in [`Monty`], with what it has printed so far.
+#[derive(Debug)]
 pub struct Suspension {
     function_call: Box<ReplFunctionCall>,
     streams: CollectedStreams,

@@ -46,6 +46,7 @@ struct World {
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,
     caller_error: Option<ghostmode::Error>,
+    host_error: Option<Box<dyn std::error::Error + Send + Sync>>,
     /// How long the last [`Request`] from the test (standing in for the caller) to the
     /// `Sandbox` took to return, including time the sandbox spent waiting on the script
     /// and the host's tool calls.

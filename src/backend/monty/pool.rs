@@ -14,9 +14,9 @@
 //! [`Sandbox::cancel`]: crate::Sandbox::cancel
 //! [`Sandbox::reset`]: crate::Sandbox::reset
 
-use std::error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::{error, fmt};
 
 use monty_pool::{
     Checkout, Pool, PoolConfig, PoolError, PrintFuture, ReplConfig, ResumeValue, TurnEvent,
@@ -77,6 +77,29 @@ pub struct Suspension {
     config: ReplConfig,
     checkout: Checkout,
     streams: Streams,
+}
+
+impl fmt::Debug for MontyPool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MontyPool").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Suspension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Suspension")
+            .field("config", &self.config)
+            .field("streams", &self.streams)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WorkerOptions {
