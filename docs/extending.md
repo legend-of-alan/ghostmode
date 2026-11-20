@@ -32,16 +32,16 @@ sequenceDiagram
     participant Backend
     participant Host
     Caller->>Sandbox: execute(code, restart)
-    Sandbox->>Backend: feed_start(session, code, tool_ids)
-    Backend-->>Sandbox: Progress::Call with the call and the suspension
+    Sandbox->>Backend: run the code in the session until a tool call
+    Backend-->>Sandbox: the tool call and the suspended script
     Sandbox->>Host: call(call)
     Host-->>Sandbox: a future of Ok(value) or Err(host::Error)
-    Sandbox->>Backend: resume(suspension, answer, tool_ids)
-    Backend-->>Sandbox: Progress::Ended with the result, the streams and the session
+    Sandbox->>Backend: the host's answer, to run the script on
+    Backend-->>Sandbox: the result, the streams and the session
     Sandbox-->>Caller: Status, finished or failed
 ```
 
-A script can call tools many times. Each tool call adds one more round of `Progress::Call`, the host's answer and `resume` before the script ends with `Progress::Ended`.
+A script can call tools many times. Each tool call adds one more round of the tool call, the host's answer and running on, before the script ends with its result.
 
 The `Sandbox` waits for the host's answer only up to the wait set by `Builder::execute_wait`. If the wait ends first, `execute` returns a `running` status, and the run stays suspended. A later `Sandbox::poll` waits on the same answer and runs the script on from there.
 
