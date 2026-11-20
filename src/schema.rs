@@ -160,8 +160,8 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
-/// The names Python's builtins module gives a script without an import. A script that calls one
-/// gets the builtin, not a tool of the same id.
+/// The names a script gets without an import, from Python's builtins module and Monty's. A
+/// script that calls one gets the builtin, not a tool of the same id.
 #[rustfmt::skip]
 const PYTHON_BUILTINS: &[&str] = &[
     "ArithmeticError", "AssertionError", "AttributeError", "BaseException", "BaseExceptionGroup",
@@ -169,8 +169,9 @@ const PYTHON_BUILTINS: &[&str] = &[
     "ConnectionAbortedError", "ConnectionError", "ConnectionRefusedError", "ConnectionResetError",
     "DeprecationWarning", "EOFError", "Ellipsis", "EncodingWarning", "EnvironmentError",
     "Exception", "ExceptionGroup", "FileExistsError", "FileNotFoundError", "FloatingPointError",
-    "FutureWarning", "GeneratorExit", "IOError", "ImportError", "ImportWarning", "IndentationError",
-    "IndexError", "InterruptedError", "IsADirectoryError", "KeyError", "KeyboardInterrupt",
+    "FrozenInstanceError", "FutureWarning", "GeneratorExit", "IOError", "ImportError",
+    "ImportWarning", "IndentationError", "IndexError", "InterruptedError", "IsADirectoryError",
+    "KeyError", "KeyboardInterrupt",
     "LookupError", "MemoryError", "ModuleNotFoundError", "NameError", "NotADirectoryError",
     "NotImplemented", "NotImplementedError", "OSError", "OverflowError",
     "PendingDeprecationWarning", "PermissionError", "ProcessLookupError",
@@ -198,10 +199,11 @@ pub fn is_python_identifier(id: &str) -> bool {
 }
 
 /// Whether `arg` can name a keyword argument in a Python `def`: `arg` is ASCII letters, digits
-/// and `_`, doesn't start with a digit, and isn't a Python keyword.
+/// and `_`, doesn't start with a digit, and is neither a Python keyword nor `__debug__`.
 fn is_python_argument(arg: &str) -> bool {
     !arg.is_empty()
         && !arg.starts_with(|c: char| c.is_ascii_digit())
         && arg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         && !PYTHON_KEYWORDS.contains(&arg)
+        && arg != "__debug__"
 }

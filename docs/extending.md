@@ -51,7 +51,7 @@ A host is any type that implements `Host`. The trait has two methods.
 
 `tools` returns the tools a script may call, as a `Vec<Tool>`. Each `Tool` has three fields:
 
-- `id` is the name the script calls the tool by, as a Python function. Use a Python identifier that is not a Python keyword, such as `add_note`, and check it with `schema::is_python_identifier`. The `execute` description that `schema::mcp_definitions` writes leaves out any tool whose id is not one.
+- `id` is the name the script calls the tool by, as a Python function. Use a Python identifier, such as `add_note`, that is neither a Python keyword nor a builtin's name, such as `print`, and check it with `schema::is_python_identifier`. The `execute` description that `schema::mcp_definitions` writes leaves out any tool whose id is not one.
 - `description` tells the model what the tool does.
 - `input_schema` is the JSON Schema of the tool's keyword arguments.
 
