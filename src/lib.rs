@@ -59,9 +59,5 @@ pub mod schema;
 pub use sandbox::{Builder, Error, Limits, Sandbox, Status};
 
 #[cfg(all(doctest, feature = "monty"))]
-#[doc = include_str!("../README.md")]
-struct ReadmeDoctests;
-
-#[cfg(all(doctest, feature = "monty"))]
 #[doc = include_str!("../docs/extending.md")]
 struct ExtendingGuideDoctests;

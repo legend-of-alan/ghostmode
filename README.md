@@ -43,42 +43,7 @@ Every arrow inside the caller's process is a plain Rust function call. The model
 
 Write a host, build a `Sandbox`, and give the model the `execute` and `poll` definitions. When the model calls `execute`, pass its code to `Sandbox::execute` and send the `Status` JSON back. If the run is still going, the model calls `poll` with the `run_id`, and you pass that to `Sandbox::poll`.
 
-```rust
-use futures_util::future::{BoxFuture, FutureExt};
-use ghostmode::host::{self, Call, Host, Tool};
-use ghostmode::{schema, Sandbox};
-use serde_json::{json, Value};
-
-struct Echo;
-
-impl Host for Echo {
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
-            id: "echo".into(),
-            description: "Returns the text you pass it.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "text": { "type": "string" } },
-                "required": ["text"],
-            }),
-        }]
-    }
-
-    fn call(&self, call: &Call) -> BoxFuture<'static, Result<Value, host::Error>> {
-        let text = call.args.get("text").cloned().ok_or_else(|| host::Error::Failed("text is required".into()));
-        async move { text }.boxed()
-    }
-}
-
-async fn execute_echo() {
-    let host = Echo;
-    let definitions = schema::list_mcp_tools(&host.tools());
-    let mut sandbox = Sandbox::builder(host).build().await;
-    // Hand `definitions` to the model. When it calls execute, run the code and send the Status JSON back.
-    let status = sandbox.execute("echo(text='hello')", false).await;
-    let reply = serde_json::to_value(&status).unwrap();
-}
-```
+The [crate docs on docs.rs](https://docs.rs/ghostmode) open with a full example: a host with one tool, and a `Sandbox` that runs one script.
 
 `schema::list_mcp_tools` gives you the pair in MCP shape, and `schema::list_openai_functions` gives them as OpenAI functions. With the `rmcp` feature on, pass an `mcp::Server` to `Sandbox::builder` instead of writing your own host.
 
