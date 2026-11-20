@@ -29,7 +29,7 @@ impl Server {
         for mcp_tool in peer.list_all_tools().await.map_err(Error::ListTools)? {
             let mcp_id = mcp_tool.name.into_owned();
             let tool_id = to_tool_id(&mcp_id);
-            if !schema::is_python_identifier(&tool_id) {
+            if !schema::is_tool_id(&tool_id) {
                 return Err(Error::UncallableId { tool_id });
             }
             if let Some(other) = mcp_ids.insert(tool_id.clone(), mcp_id.clone()) {

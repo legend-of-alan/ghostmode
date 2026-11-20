@@ -12,7 +12,7 @@ use crate::host;
 pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
     let stubs: Vec<String> = host_tools
         .iter()
-        .filter(|tool| is_python_identifier(&tool.id))
+        .filter(|tool| is_tool_id(&tool.id))
         .map(format_stub)
         .collect();
     let execute_description = format!(
@@ -194,7 +194,7 @@ const PYTHON_BUILTINS: &[&str] = &[
 /// Whether a script can call a function named `id`: `id` is ASCII letters, digits and `_`,
 /// doesn't start with a digit, and is neither a Python keyword nor a builtin's name. A host can
 /// check its tool ids with it.
-pub fn is_python_identifier(id: &str) -> bool {
+pub fn is_tool_id(id: &str) -> bool {
     is_python_argument(id) && !PYTHON_BUILTINS.contains(&id)
 }
 
