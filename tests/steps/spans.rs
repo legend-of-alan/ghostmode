@@ -130,3 +130,27 @@ fn no_field_holds(world: &mut World, text: String) {
         }
     }
 }
+
+/// The fields of the last captured span named `name`. Panics if no span has that name.
+fn last_span_fields(world: &World, name: &str) -> Vec<(String, String)> {
+    let spans = world.span_capture.spans();
+    let span = spans.into_iter().rev().find(|span| span.name == name);
+    span.unwrap_or_else(|| panic!("no {name} span")).fields
+}
+
+#[then(regex = r"^the (\w+) span's `(\w+)` is (.+)$")]
+fn span_field_is(world: &mut World, name: String, field: String, expected: String) {
+    let fields = last_span_fields(world, &name);
+    let value = fields.iter().rev().find(|(key, _)| *key == field);
+    assert_eq!(
+        value.map(|(_, value)| value.as_str()),
+        Some(expected.as_str()),
+        "{fields:?}"
+    );
+}
+
+#[then(regex = r"^the (\w+) span records a `(\w+)`$")]
+fn span_records(world: &mut World, name: String, field: String) {
+    let fields = last_span_fields(world, &name);
+    assert!(fields.iter().any(|(key, _)| *key == field), "{fields:?}");
+}

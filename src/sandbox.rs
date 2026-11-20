@@ -296,14 +296,18 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     /// lost them, which the next status reports as `restarted`. The host's answer to the call the
     /// script waits on is dropped. Cancelling any other run changes nothing.
     pub async fn cancel(&mut self, run_id: u64) -> bool {
+        let span = tracing::info_span!("cancel", run_id, status = Empty, duration = Empty);
+        let started = Instant::now();
         let is_open = self.is_open_run(run_id);
         let Some(run) = self.take_run_if(|_| is_open) else {
+            record_end(&span, "not_open", started);
             return false;
         };
         let message = format!("run {run_id} was cancelled");
         let ending = self.builder.backend.abandon(run.suspension, message).await;
         self.state = Some(State::Idle(ending.session));
         self.unreported_restart |= ending.lost_globals;
+        record_end(&span, "cancelled", started);
         true
     }
 
@@ -464,6 +468,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             }
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
+        Span::current().record("run_id", self.last_run_id);
         let message = format!("run {} expired", self.last_run_id);
         let ending = self.builder.backend.abandon(run.suspension, message).await;
         Some(self.end_run(ending, run.answered_calls))
@@ -554,7 +559,11 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let span = tracing::info_span!(parent: None, "call", run_id, tool_id = %call.tool_id, status = Empty, duration = Empty);
         let answer = self.builder.host.call(call);
         let timeout = self.builder.limits.call_timeout.map(Delay::new);
-        let started = Instant::now();
+        let mut trace = CallTrace {
+            span: span.clone(),
+            started: Instant::now(),
+            status: "dropped",
+        };
         async move {
             let answer = match timeout {
                 Some(timeout) => match future::select(answer, timeout).await {
@@ -563,13 +572,13 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                 },
                 None => Some(answer.await),
             };
-            let status = match &answer {
+            trace.status = match &answer {
                 Some(Ok(_)) => "answered",
                 Some(Err(host::Error::Refused(_))) => "refused",
                 Some(Err(host::Error::Failed(_))) => "failed",
                 None => "timed_out",
             };
-            record_end(&Span::current(), status, started);
+            drop(trace);
             answer
         }
         .instrument(span)
@@ -842,6 +851,20 @@ fn compute_hmac(key: &[u8], bytes: &[u8]) -> Hmac<Sha256> {
         Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 takes a key of any length");
     hmac.update(bytes);
     hmac
+}
+
+/// A `call` span that records its status and duration when this value drops: the status the
+/// host's answer set, or `dropped` if the call's future dropped before the answer came.
+struct CallTrace {
+    span: Span,
+    started: Instant,
+    status: &'static str,
+}
+
+impl Drop for CallTrace {
+    fn drop(&mut self) {
+        record_end(&self.span, self.status, self.started);
+    }
 }
 
 /// Records on `span` the status a traced step ended with and how long it took since `started`.
