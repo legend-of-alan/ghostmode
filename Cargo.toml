@@ -31,7 +31,7 @@ monty-pool = ["dep:monty-pool", "dep:monty-types"]
 rmcp = ["dep:rmcp"]
 
 [dev-dependencies]
-cucumber = "=0.23.0"
+cucumber = "0.23"
 futures = "0.3"
 rmcp = { version = "3.11", default-features = false, features = ["client", "server"] }
 tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
