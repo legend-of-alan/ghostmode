@@ -8,13 +8,14 @@ Feature: A call the caller stops awaiting loses the session, and the next call s
     Then the status is failed with an error naming NameError
     And the status says the session restarted
 
-  Scenario: Dump after a dropped execute writes a fresh session
+  Scenario: Dump after a dropped execute writes a fresh session that says it restarted
     When the model executes x = 1
     And the caller stops awaiting the model's execute of while True: pass
     And the caller dumps the sandbox
     And the caller restores the dump into a new sandbox
     And the model executes x
     Then the status is failed with an error naming NameError
+    And the status says the session restarted
 
   Scenario: Execute after a dropped dump runs in a fresh session and says it restarted
     When the model executes x = "a" * 4000000

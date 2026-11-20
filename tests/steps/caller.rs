@@ -93,7 +93,7 @@ fn error_is_run_open(world: &mut World, run_id: u64) {
     );
 }
 
-#[then("the caller's error is that the backend can't restore the bytes")]
+#[then("the caller's error is that the bytes don't restore")]
 fn error_is_restore(world: &mut World) {
     let error = world.caller_error.as_ref().expect("a caller error");
     assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");

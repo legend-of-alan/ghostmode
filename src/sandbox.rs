@@ -30,6 +30,8 @@ pub struct Sandbox<H, B: Backend> {
     /// The id of the last run `execute` started, which is the suspended run's id while one is
     /// open.
     last_run_id: u64,
+    /// Whether the session lost its globals since the last finished or failed status, so the
+    /// next one says `restarted`.
     unreported_restart: bool,
 }
 
@@ -48,6 +50,10 @@ pub struct Builder<H, B> {
 
 /// How many bytes the HMAC-SHA256 tag takes that a signing key appends to a dump.
 const TAG_BYTES: usize = 32;
+
+/// How many bytes the header takes that starts a dump: one byte for whether the session owes the
+/// model a `restarted` status, then the last run id as 8 little-endian bytes.
+const HEADER_BYTES: usize = 9;
 
 /// What a script may use before the sandbox stops it with a `failed` status. A stopped script
 /// leaves the session's globals as it had set them, unless the backend lost them, which the next
@@ -142,7 +148,8 @@ pub enum Error {
     },
     /// The backend can't write the session as bytes, for this reason.
     Dump(Box<dyn error::Error + Send + Sync>),
-    /// The backend can't load these bytes as a session, for this reason.
+    /// The bytes are too short to be a dump, or the backend can't load them as a session, for
+    /// this reason.
     Restore(Box<dyn error::Error + Send + Sync>),
     /// The bytes don't end in the tag that the builder's signing key makes for them: the key
     /// didn't sign them, or they changed since.
@@ -257,8 +264,10 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let Some(run) = self.take_run_if(|_| is_open) else {
             return false;
         };
-        let (session, _) = self.builder.backend.abandon(run.suspension).await;
-        self.state = Some(State::Idle(session));
+        let message = format!("run {run_id} was cancelled");
+        let ending = self.builder.backend.abandon(run.suspension, message).await;
+        self.state = Some(State::Idle(ending.session));
+        self.unreported_restart |= ending.lost_globals;
         true
     }
 
@@ -272,8 +281,9 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         self.unreported_restart = true;
     }
 
-    /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox. With a
-    /// signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
+    /// The idle session as bytes that [`Builder::restore`] loads into a new sandbox, with the
+    /// last run id and whether the next finished or failed status owes the model `restarted`.
+    /// With a signing key, the bytes end in its HMAC-SHA256 tag. While a run is open this is
     /// [`Error::RunOpen`], and bytes the backend can't write are [`Error::Dump`]. A session lost
     /// to a dropped `execute`, `poll`, `cancel` or `dump` future starts fresh first.
     pub async fn dump(&mut self) -> Result<Vec<u8>, Error> {
@@ -281,9 +291,12 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             self.reset().await;
         }
         let mut session = self.take_session()?;
-        let dump = self.builder.backend.dump(&mut session).await;
+        let (dump, lost_globals) = self.builder.backend.dump(&mut session).await;
         self.state = Some(State::Idle(session));
-        let mut bytes = dump.map_err(Error::Dump)?;
+        self.unreported_restart |= lost_globals;
+        let mut bytes = vec![u8::from(self.unreported_restart)];
+        bytes.extend(self.last_run_id.to_le_bytes());
+        bytes.extend(dump.map_err(Error::Dump)?);
         if let Some(key) = self.builder.signing_key {
             let tag = compute_hmac(&key, &bytes).finalize().into_bytes();
             bytes.extend_from_slice(&tag);
@@ -411,27 +424,22 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             return None;
         }
         let run = self.take_run_if(|run| run.idle_since.elapsed() >= idle_timeout)?;
-        let (session, streams) = self.builder.backend.abandon(run.suspension).await;
-        let ending = Ending {
-            result: Err(format!("run {} expired", self.last_run_id)),
-            streams,
-            session,
-            restarted: false,
-        };
+        let message = format!("run {} expired", self.last_run_id);
+        let ending = self.builder.backend.abandon(run.suspension, message).await;
         Some(self.end_run(ending, run.answered_calls))
     }
 
     /// Ends the run: the `ending`'s session is idle again, and the script's result and what it
     /// printed to stdout and stderr become the status. The result gets its share of
     /// [`Limits::output_chars`] against both streams together, and the two streams then share
-    /// the rest. The status is `restarted` if the session started fresh since the last status
-    /// that was, or if the backend says it restarted before this script.
+    /// the rest. The status says `restarted` if the session lost its globals since the last
+    /// finished or failed status, and the next status does if the backend lost them in this run.
     fn end_run(&mut self, ending: Ending<B>, answered_calls: Vec<host::Call>) -> Status {
         let Ending {
             result,
             streams,
             session,
-            restarted,
+            lost_globals,
         } = ending;
         self.state = Some(State::Idle(session));
         let result_text = match &result {
@@ -453,7 +461,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             .then(|| cut_text(&stdout, stdout_chars, stdout_share).unwrap_or(stdout));
         let stderr = (!stderr.is_empty())
             .then(|| cut_text(&stderr, stderr_chars, stderr_share).unwrap_or(stderr));
-        let restarted = mem::take(&mut self.unreported_restart) || restarted;
+        let restarted = mem::replace(&mut self.unreported_restart, lost_globals);
         match result {
             Ok(value) => Status::Finished {
                 value: result_cut.map_or(value, Value::String),
@@ -570,43 +578,56 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// The sandbox, with an empty Python session.
     pub async fn build(self) -> Sandbox<H, B> {
         let session = self.backend.new_session(&self.limits).await;
-        self.build_with_session(session)
+        self.build_with_session(session, 0, false)
     }
 
     /// The sandbox, with the session that `bytes` from [`Sandbox::dump`] hold, running under
-    /// this builder's limits. Bytes the backend can't load are [`Error::Restore`].
+    /// this builder's limits. Its run ids go on from the dumped sandbox's last one, and its next
+    /// finished or failed status says `restarted` if the dumped sandbox's would have. Bytes too
+    /// short to be a dump, or that the backend can't load, are [`Error::Restore`].
     ///
     /// With a [signing key](Builder::signing_key), bytes that don't end in the key's tag for
-    /// them are [`Error::SignatureMismatch`], checked in constant time before the backend reads
-    /// a byte. Without a key, restore trusts the bytes, so restore only bytes you made.
+    /// them are [`Error::SignatureMismatch`], checked in constant time before any other byte is
+    /// read. Without a key, restore trusts the bytes, so restore only bytes you made.
     pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, Error> {
-        let session_bytes = match self.signing_key {
+        let dump = match self.signing_key {
             Some(key) => {
-                let (session_bytes, tag) = bytes
+                let (dump, tag) = bytes
                     .split_last_chunk::<TAG_BYTES>()
                     .ok_or(Error::SignatureMismatch)?;
-                compute_hmac(&key, session_bytes)
+                compute_hmac(&key, dump)
                     .verify_slice(tag)
                     .map_err(|_| Error::SignatureMismatch)?;
-                session_bytes
+                dump
             }
             None => bytes,
         };
+        let ([restart_byte, last_run_id_bytes @ ..], session_bytes) = dump
+            .split_first_chunk::<HEADER_BYTES>()
+            .ok_or_else(|| Error::Restore("the bytes are too short to be a dump".into()))?;
         let session = self
             .backend
             .restore(session_bytes, &self.limits)
             .await
             .map_err(Error::Restore)?;
-        Ok(self.build_with_session(session))
+        let last_run_id = u64::from_le_bytes(*last_run_id_bytes);
+        Ok(self.build_with_session(session, last_run_id, *restart_byte != 0))
     }
 
-    /// The sandbox, with `session` as its idle Python session.
-    fn build_with_session(self, session: B::Session) -> Sandbox<H, B> {
+    /// The sandbox, with `session` as its idle Python session, `last_run_id` as the id its next
+    /// run counts on from, and `unreported_restart` as whether its next finished or failed status
+    /// says `restarted`.
+    fn build_with_session(
+        self,
+        session: B::Session,
+        last_run_id: u64,
+        unreported_restart: bool,
+    ) -> Sandbox<H, B> {
         Sandbox {
             builder: self,
             state: Some(State::Idle(session)),
-            last_run_id: 0,
-            unreported_restart: false,
+            last_run_id,
+            unreported_restart,
         }
     }
 }

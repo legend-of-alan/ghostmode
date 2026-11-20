@@ -70,8 +70,6 @@ pub struct Session {
     config: ReplConfig,
     /// The session's worker, or `None` before its first script and after its worker ended.
     checkout: Option<Checkout>,
-    /// Whether the session lost a worker, and the globals in it, since its last script.
-    lost_worker: bool,
 }
 
 /// A script suspended at a tool call in [`MontyPool`], with what it has printed so far.
@@ -79,8 +77,6 @@ pub struct Suspension {
     config: ReplConfig,
     checkout: Checkout,
     streams: Streams,
-    /// Whether the session started fresh before this script.
-    restarted: bool,
 }
 
 impl WorkerOptions {
@@ -189,7 +185,6 @@ impl Backend for MontyPool {
         Session {
             config: to_repl_config(limits),
             checkout: None,
-            lost_worker: false,
         }
     }
 
@@ -199,11 +194,7 @@ impl Backend for MontyPool {
         code: &str,
         tool_ids: &[String],
     ) -> Progress<Self> {
-        let Session {
-            config,
-            checkout,
-            lost_worker: restarted,
-        } = session;
+        let Session { config, checkout } = session;
         let mut checkout = match self.take_worker(checkout, &config).await {
             Ok(checkout) => checkout,
             Err(error) => {
@@ -213,9 +204,8 @@ impl Backend for MontyPool {
                     session: Session {
                         config,
                         checkout: None,
-                        lost_worker: false,
                     },
-                    restarted,
+                    lost_globals: false,
                 });
             }
         };
@@ -233,7 +223,6 @@ impl Backend for MontyPool {
             config,
             checkout,
             streams,
-            restarted,
         };
         self.run(script, turn, tool_ids).await
     }
@@ -256,37 +245,33 @@ impl Backend for MontyPool {
 
     /// Ends the script by ending its worker, so the session loses its globals.
     async fn abort(&self, suspension: Suspension, message: String) -> Ending<Self> {
-        let restarted = suspension.restarted;
-        let (session, streams) = suspension.kill_worker();
-        Ending {
-            result: Err(MontyException::runtime_error(message).to_string()),
-            streams,
-            session,
-            restarted,
-        }
+        suspension.kill_worker(Err(MontyException::runtime_error(message).to_string()))
     }
 
     /// Ends the script's worker, so the session loses its globals.
-    async fn abandon(&self, suspension: Suspension) -> (Session, Streams) {
-        suspension.kill_worker()
+    async fn abandon(&self, suspension: Suspension, message: String) -> Ending<Self> {
+        suspension.kill_worker(Err(message))
     }
 
     /// A session with no worker yet checks one out to dump. Bytes the worker can't write are an
-    /// `Err` that says why.
+    /// `Err` that says why. A worker that ends while it dumps takes the session's globals with it.
     async fn dump(
         &self,
         session: &mut Session,
-    ) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
-        let mut checkout = self
+    ) -> (Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>, bool) {
+        let mut checkout = match self
             .take_worker(session.checkout.take(), &session.config)
-            .await?;
+            .await
+        {
+            Ok(checkout) => checkout,
+            Err(error) => return (Err(error.into()), false),
+        };
         let bytes = checkout.dump().await;
-        if checkout.worker_id().is_some() {
+        let alive = checkout.worker_id().is_some();
+        if alive {
             session.checkout = Some(checkout);
-        } else {
-            session.lost_worker = true;
         }
-        Ok(bytes?)
+        (bytes.map_err(Into::into), !alive)
     }
 
     /// Bytes the worker can't load are an `Err` that says why. Bytes that crash or hang the
@@ -308,14 +293,13 @@ impl Backend for MontyPool {
         Ok(Session {
             config,
             checkout: Some(checkout),
-            lost_worker: false,
         })
     }
 }
 
 impl Suspension {
     /// How the script ended with `result`. The session keeps the worker if it is still alive,
-    /// and otherwise has none, and the next script reports that it restarted.
+    /// and otherwise has none and says the session lost its globals.
     fn into_ending(self, result: Result<Value, String>) -> Ending<MontyPool> {
         let alive = self.checkout.worker_id().is_some();
         Ending {
@@ -324,23 +308,25 @@ impl Suspension {
             session: Session {
                 config: self.config,
                 checkout: alive.then_some(self.checkout),
-                lost_worker: !alive,
             },
-            restarted: self.restarted,
+            lost_globals: !alive,
         }
     }
 
-    /// Ends the script by ending its worker, and gives back the session, which has no worker,
-    /// and what the script printed. The next script reports that the session restarted.
-    /// Dropping the checkout kills the worker process and frees its place in the pool.
-    fn kill_worker(self) -> (Session, Streams) {
+    /// Ends the script with `result` by ending its worker, so the session it gives back has no
+    /// worker and says it lost its globals. Dropping the checkout kills the worker process and
+    /// frees its place in the pool.
+    fn kill_worker(self, result: Result<Value, String>) -> Ending<MontyPool> {
         drop(self.checkout);
-        let session = Session {
-            config: self.config,
-            checkout: None,
-            lost_worker: true,
-        };
-        (session, self.streams)
+        Ending {
+            result,
+            streams: self.streams,
+            session: Session {
+                config: self.config,
+                checkout: None,
+            },
+            lost_globals: true,
+        }
     }
 }
 
