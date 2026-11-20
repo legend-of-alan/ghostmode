@@ -664,7 +664,9 @@ impl Status {
 fn to_text(value: &Value) -> Cow<'_, str> {
     match value {
         Value::String(text) => Cow::Borrowed(text),
-        other => Cow::Owned(other.to_string()),
+        other => {
+            Cow::Owned(serde_json::to_string(other).expect("a Value always serializes to JSON"))
+        }
     }
 }
 
