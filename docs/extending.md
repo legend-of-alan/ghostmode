@@ -39,7 +39,7 @@ A host is any type that implements `Host`. The trait has two methods.
 
 `tools` returns the tools a script may call, as a `Vec<Tool>`. Each `Tool` has three fields:
 
-- `id` is the name the script calls the tool by, as a Python function. Use a Python identifier that is not a Python keyword, such as `add_note`. The `execute` description that `schema::list_mcp_tools` writes leaves out any tool whose id is not one.
+- `id` is the name the script calls the tool by, as a Python function. Use a Python identifier that is not a Python keyword, such as `add_note`, and check it with `schema::is_python_identifier`. The `execute` description that `schema::list_mcp_tools` writes leaves out any tool whose id is not one.
 - `description` tells the model what the tool does.
 - `input_schema` is the JSON Schema of the tool's keyword arguments.
 
@@ -116,6 +116,7 @@ For a host that does real I/O, see `mcp::Server` in `src/mcp.rs`. It clones what
 - **The future may be dropped.** The `Sandbox` drops the future when the call passes `call_timeout`, when the caller calls `Sandbox::cancel` or `Sandbox::reset`, and when the run passes `idle_timeout`. Don't rely on the future running to the end.
 - **The tool list is read once for Monty.** `Sandbox::builder` calls `tools` once and gives Monty the tool ids. A tool that `tools` adds later is not callable in that `Sandbox`.
 - **Arguments are keywords.** Monty raises TypeError for a positional argument before the call reaches the host, so `call.args` holds every argument.
+- **Keys come sorted.** Objects in `call.args`, the host's answers and the script's results come with their keys sorted. To keep insertion order, turn on serde_json's `preserve_order` feature in your own `Cargo.toml`.
 - **Answer every call.** Use Refused for a call the host won't run, such as one without permission. Use Failed for a call that ran and went wrong. Answer an unknown `tool_id` with Failed, as `mcp::Server` does.
 
 ## Write a backend
