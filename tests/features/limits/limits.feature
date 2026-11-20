@@ -24,7 +24,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes this script:
       """
       chunks = []
-      for i in range(300):
+      for i in range(128):
           chunks.append("a" * (1024 * 1024))
       """
     Then the status is failed with an error naming MemoryError
