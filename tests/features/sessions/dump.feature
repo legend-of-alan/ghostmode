@@ -54,7 +54,7 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
       | the bytes "short"          |
       | the dump cut to its header |
 
-  Scenario: Restoring a dump of another format version fails with a restore error naming both versions
+  Scenario: Restoring a dump of another format version fails with a restore error whose chain names both versions once
     When the model executes x = 7
     And the caller dumps the sandbox
     And the caller restores the dump with its first byte flipped into a new sandbox

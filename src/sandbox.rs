@@ -22,8 +22,8 @@ use crate::host::{self, Host, Tool};
 /// In-process `backend::Monty` runs the script on the thread that polls `execute` or `poll`,
 /// while `backend::MontyPool` runs it in a worker process. A wait ends only while the script
 /// waits on the host: a script that runs past it holds `execute` or `poll` until it calls a
-/// tool or ends, and [`Limits::run_time`] bounds the script's own time. Its `Debug` output never
-/// shows the signing key.
+/// tool or ends, and [`Limits::run_time`] bounds the script's own time, which in-process is
+/// checked between steps. Its `Debug` output never shows the signing key.
 pub struct Sandbox<H, B: Backend> {
     builder: Builder<H, B>,
     /// The session, or `None` once a backend call that held it was dropped, which loses it.
@@ -76,12 +76,14 @@ const HEADER_BYTES: usize = 10;
 #[non_exhaustive]
 pub struct Limits {
     /// How long the script itself may run, summed over `execute` and every `poll` of its run
-    /// and not counting time spent waiting on the host. The default is 30 s.
+    /// and not counting time spent waiting on the host. In-process `backend::Monty` checks it
+    /// between steps, so one long step, such as a huge multiplication, runs to its end first. The
+    /// default is 30 s.
     pub run_time: Duration,
     /// The most memory the script may use. In-process this does not cap the script's total
     /// memory. It only refuses one value bigger than the limit, such as one huge string, with
-    /// `MemoryError`. A `backend::MontyPool` worker caps the script's total memory. The default is
-    /// 256 MiB.
+    /// `MemoryError`, and a host's answer becomes a script value without being checked against it.
+    /// A `backend::MontyPool` worker caps the script's total memory. The default is 256 MiB.
     pub memory_bytes: usize,
     /// How deep the script's calls may nest before it raises `RecursionError`. The default is
     /// 1,000.
@@ -239,18 +241,19 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
     }
 
     /// Runs `code`, waiting up to the execute wait for its tool calls. A script that fails is a
-    /// `failed` status, as is a request while another run is still running. If a run waited
-    /// past its idle timeout with no answer from the host, it expires and `execute` answers its
-    /// `failed` status without running `code`. With `restart`, an idle session starts fresh
-    /// before `code` runs, so the script sees no globals. A session lost to a dropped
-    /// `execute`, `poll`, `cancel` or `dump` future also starts fresh, and the next finished or
-    /// failed status says `restarted`.
+    /// `failed` status, as is a request without `restart` while another run is still running. If
+    /// a run waited past its idle timeout with no answer from the host, it expires and `execute`
+    /// answers its `failed` status without running `code`. With `restart`, the session starts
+    /// fresh before `code` runs, as [`Sandbox::reset`] does, so the script sees no globals and
+    /// polling a run that was open answers `failed`. A session lost to a dropped `execute`,
+    /// `poll`, `cancel` or `dump` future also starts fresh, and the next finished or failed
+    /// status says `restarted`.
     pub async fn execute(&mut self, code: &str, restart: bool) -> Status {
         trace_step!("execute", async {
             if let Some(status) = self.expire_idle_run().await {
                 return status;
             }
-            if self.state.is_none() || (restart && matches!(self.state, Some(State::Idle(_)))) {
+            if restart || self.state.is_none() {
                 self.reset().await;
             }
             let session = match self.take_session() {
@@ -732,8 +735,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RunOpen { run_id } => write!(f, "run {run_id} is still running"),
-            Self::Dump(error) => write!(f, "can't dump the session: {error}"),
-            Self::Restore(error) => write!(f, "can't restore the session: {error}"),
+            Self::Dump(_) => f.write_str("can't dump the session"),
+            Self::Restore(_) => f.write_str("can't restore the session"),
             Self::SignatureMismatch => f.write_str("the signing key didn't sign these bytes"),
         }
     }

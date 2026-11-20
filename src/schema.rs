@@ -35,7 +35,7 @@ pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
                     "restart": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Start the session fresh first, with no globals. The status then carries \"restarted\": true.",
+                        "description": "Start the session fresh first, with no globals, dropping any run still running. The status then carries \"restarted\": true.",
                     },
                 },
                 "required": ["code"],
