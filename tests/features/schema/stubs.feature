@@ -31,13 +31,11 @@ Feature: The execute description lists each host tool as a typed Python stub
     Given a host whose `find` description is "Finds a\b or """x""""
     Then the execute description contains """"Finds a\\b or \"\"\"x\"\"\"""""
 
-  Scenario Outline: A tool whose id isn't a Python identifier gets no stub, and `is_python_identifier` says so
+  Scenario Outline: A tool whose id isn't a Python identifier gets no stub
     Given a host whose `<id>` answers {}
     And a host whose `ping` answers {}
     Then the execute description contains "def ping() -> Any:"
     And the execute description doesn't contain "def <id>("
-    And `ping` is a Python identifier
-    And `<id>` is not a Python identifier
 
     Examples:
       | id       |

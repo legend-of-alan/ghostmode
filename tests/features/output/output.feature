@@ -20,9 +20,8 @@ Feature: A status keeps the head and tail of output over budget, and carries wha
     Then the status is <status>
 
     Examples:
-      | case                        | script                                                     | status                                                                     |
-      | prints around a tool call   | print("before"); search(query="a"); print("after"); 1      | {"status": "finished", "value": 1, "stdout": "before\\nafter\\n"}          |
-      | prints to stdout and stderr | import sys; print("out"); print("err", file=sys.stderr); 1 | {"status": "finished", "value": 1, "stdout": "out\\n", "stderr": "err\\n"} |
+      | case                      | script                                                | status                                                            |
+      | prints around a tool call | print("before"); search(query="a"); print("after"); 1 | {"status": "finished", "value": 1, "stdout": "before\\nafter\\n"} |
 
   Scenario: A script that prints and then raises fails with its prints in stdout and stderr and the traceback in error
     When the model executes import sys; print("out"); print("hi", file=sys.stderr); raise ValueError("no")

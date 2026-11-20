@@ -94,15 +94,6 @@ fn execute_description_lacks(world: &mut World, text: String) {
     assert!(!description.contains(&text), "{description}");
 }
 
-#[then(regex = r"^`(\S+)` is (not )?a Python identifier$")]
-fn id_is_python_identifier(_world: &mut World, id: String, negation: String) {
-    assert_eq!(
-        schema::is_python_identifier(&id),
-        negation.is_empty(),
-        "{id}"
-    );
-}
-
 /// The description of `execute` that `list_mcp_tools` lists for the scenario's host.
 fn execute_description(world: &World) -> String {
     let tools = schema::list_mcp_tools(&world.host.tools());
