@@ -36,8 +36,9 @@ pub struct Sandbox<H, B: Backend> {
     unreported_restart: bool,
 }
 
-/// Sets up a [`Sandbox`]. Made by [`Builder::new`], which names the backend. The built sandbox keeps its builder and runs with its host, backend, waits, limits and signing
-/// key. Its `Debug` output never shows the signing key.
+/// Sets up a [`Sandbox`]. Made by [`Builder::new`], which names the backend. The built sandbox
+/// keeps its builder and runs with its host, backend, waits, limits and signing key. Its `Debug`
+/// output never shows the signing key.
 pub struct Builder<H, B> {
     host: H,
     tool_ids: Vec<String>,

@@ -5,7 +5,7 @@ A `Sandbox` works with two parts that you can replace:
 - **The host** decides which tools a script can call, and answers each call. Write one to offer your own tools. It implements the `Host` trait in `src/host.rs`.
 - **The backend** runs the script. Write one to run scripts in another interpreter or another process. It implements the `Backend` trait in `src/backend.rs`.
 
-If you only want to offer tools, you only need a host. The default backend is `Monty`, and the `monty-pool` feature adds `backend::MontyPool`. [Where scripts run](#where-scripts-run) compares them.
+If you only want to offer tools, you only need a host. The `monty` feature, on by default, adds `backend::Monty`, and the `monty-pool` feature adds `backend::MontyPool`. [Where scripts run](#where-scripts-run) compares them.
 
 The README and this guide use these words:
 
