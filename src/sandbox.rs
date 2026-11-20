@@ -627,7 +627,7 @@ impl<H: Host, B: Backend> Builder<H, B> {
     /// A failed restore returns the error together with this builder, boxed, so the caller can
     /// [`build`](Builder::build) a fresh sandbox over the same host and backend.
     pub async fn restore(self, bytes: &[u8]) -> Result<Sandbox<H, B>, (Error, Box<Self>)> {
-        match self.read_dump(bytes).await {
+        match Self::read_dump(&self.backend, &self.limits, self.signing_key, bytes).await {
             Ok((session, last_run_id, unreported_restart)) => {
                 Ok(self.build_with_session(session, last_run_id, unreported_restart))
             }
@@ -635,10 +635,16 @@ impl<H: Host, B: Backend> Builder<H, B> {
         }
     }
 
-    /// The session that `bytes` from [`Sandbox::dump`] hold, loaded under this builder's limits,
-    /// with the dumped sandbox's last run id and whether its next status says `restarted`.
-    async fn read_dump(&self, bytes: &[u8]) -> Result<(B::Session, u64, bool), Error> {
-        let dump = match self.signing_key {
+    /// The session that `bytes` from [`Sandbox::dump`] hold, loaded by `backend` under
+    /// `limits` and checked against `signing_key`, with the dumped sandbox's last run id and
+    /// whether its next status says `restarted`.
+    async fn read_dump(
+        backend: &B,
+        limits: &Limits,
+        signing_key: Option<[u8; 32]>,
+        bytes: &[u8],
+    ) -> Result<(B::Session, u64, bool), Error> {
+        let dump = match signing_key {
             Some(key) => {
                 let (dump, tag) = bytes
                     .split_last_chunk::<TAG_BYTES>()
@@ -659,9 +665,8 @@ impl<H: Host, B: Backend> Builder<H, B> {
                     .into(),
             ));
         }
-        let session = self
-            .backend
-            .restore(session_bytes, &self.limits)
+        let session = backend
+            .restore(session_bytes, limits)
             .await
             .map_err(Error::Restore)?;
         Ok((

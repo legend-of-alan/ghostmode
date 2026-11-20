@@ -93,9 +93,9 @@ enum TestBackend {
     MontyPool(ghostmode::backend::MontyPool),
 }
 
-/// A sandbox restored from a dump, or the caller's error with the build of the builder that
-/// the failed restore returned.
-type Restored =
+/// A new sandbox, or, when restoring a dump into it fails, the caller's error with the build of
+/// the builder that the restore returned.
+type NewSandbox =
     Result<Box<dyn AnySandbox>, (ghostmode::Error, BoxFuture<'static, Box<dyn AnySandbox>>)>;
 
 /// A sandbox over any backend, which the When steps send each [`Request`] to.
@@ -134,7 +134,7 @@ impl<B: Backend + Send + 'static> AnySandbox for Sandbox<test_host::TestHost, B>
 impl World {
     /// A new sandbox over this pass's backend, with the host, waits, limits and signing key the
     /// scenario's steps set. It holds an empty session, or the one in `dump` if there is one.
-    async fn new_sandbox(&self, dump: Option<&[u8]>) -> Restored {
+    async fn new_sandbox(&self, dump: Option<&[u8]>) -> NewSandbox {
         match &self.backend {
             TestBackend::Monty => build(self.builder(Monty::default()), dump).await,
             #[cfg(feature = "monty-pool")]
@@ -229,7 +229,7 @@ impl World {
 async fn build<B: Backend + Send + 'static>(
     builder: Builder<test_host::TestHost, B>,
     dump: Option<&[u8]>,
-) -> Restored {
+) -> NewSandbox {
     let sandbox = match dump {
         Some(bytes) => builder.restore(bytes).await.map_err(|(error, builder)| {
             let build = async move { Box::new(builder.build().await) as Box<dyn AnySandbox> };
