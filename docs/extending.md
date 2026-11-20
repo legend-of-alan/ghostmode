@@ -138,7 +138,7 @@ For a host that does real I/O, see `mcp::Server` in `src/mcp.rs`. It clones what
 
 ## Write a backend
 
-A backend is any type that implements `Backend`. The backend holds no session itself. The `Sandbox` keeps the idle session, or the suspended script, between calls. `feed_start` and `resume` take it by value and hand it back inside a `Progress`, and `abort` hands it back inside an `Ending`.
+A backend is any type that implements `Backend`. The backend holds no session itself. The `Sandbox` keeps the idle session, or the suspended script, between calls. `feed_start` and `resume` take it by value and hand it back inside a `Progress`, and `abort` and `abandon` hand it back inside an `Ending`.
 
 The trait has two associated types, and both must be Send:
 
@@ -151,14 +151,14 @@ It has seven methods. Each returns a future that must be Send.
 - `feed_start(session, code, tool_ids)` runs `code` in the idle session. It returns `Progress::Call` when the script calls one of the host's tools, whose ids are `tool_ids`, and `Progress::Ended` when the script ends.
 - `resume(suspension, answer, tool_ids)` gives the host's answer to the suspended call and runs on. An Ok value becomes the call's return value. A Refused error raises PermissionError, and a Failed error raises RuntimeError.
 - `abort(suspension, message)` ends the suspended script with a RuntimeError that carries `message`, and returns its `Ending`. The script can't catch this error.
-- `abandon(suspension)` drops the suspended script without running it further. It returns the idle session, with the globals the script set, and the `Streams` the script printed.
-- `dump(session)` returns the idle session as bytes, or an error for a session it can't write.
+- `abandon(suspension, message)` drops the suspended script without running it further. It returns an `Ending` whose `result` is Err with `message`, whose `session` is idle with the globals the script set, and whose `streams` hold what the script printed.
+- `dump(session)` returns the idle session as bytes, or an error for a session it can't write, together with whether it lost the session's globals while it tried.
 - `restore(bytes, limits)` loads the bytes from `dump` as an idle session, or returns an error for bytes it can't load.
 
 Every `Progress` is one of two variants:
 
 - `Progress::Call` carries the `host::Call` and the `Suspension`. The `Sandbox` sends the call to the host and passes the answer to `resume`.
-- `Progress::Ended` carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the session `restarted`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
+- `Progress::Ended` carries an `Ending`, which holds the `result`, the `streams`, the idle `session` and whether the backend lost the session's globals during the run, `lost_globals`. The `result` is Ok with the value of the script's last expression as JSON, or Err with the script's traceback as text.
 
 The toy backend below treats the whole script as one tool id. It calls that tool with no arguments, and the script's value is the tool's answer. It has no globals, so its `Session` and `Suspension` are `()`. The snippet runs it with the notes host from above.
 
@@ -184,7 +184,7 @@ impl Backend for OneCall {
         if !tool_ids.contains(&tool_id) {
             let result = Err(format!("NameError: name '{tool_id}' is not defined"));
             let streams = Streams::default();
-            return Progress::Ended(Ending { result, streams, session, restarted: false });
+            return Progress::Ended(Ending { result, streams, session, lost_globals: false });
         }
         let call = Call { tool_id, args: Map::new() };
         Progress::Call { call, suspension: () }
@@ -200,20 +200,20 @@ impl Backend for OneCall {
             host::Error::Refused(reason) => format!("PermissionError: {reason}"),
             host::Error::Failed(message) => format!("RuntimeError: {message}"),
         });
-        Progress::Ended(Ending { result, streams: Streams::default(), session: (), restarted: false })
+        Progress::Ended(Ending { result, streams: Streams::default(), session: (), lost_globals: false })
     }
 
     async fn abort(&self, _suspension: (), message: String) -> Ending<Self> {
         let result = Err(format!("RuntimeError: {message}"));
-        Ending { result, streams: Streams::default(), session: (), restarted: false }
+        Ending { result, streams: Streams::default(), session: (), lost_globals: false }
     }
 
-    async fn abandon(&self, _suspension: ()) -> ((), Streams) {
-        ((), Streams::default())
+    async fn abandon(&self, _suspension: (), message: String) -> Ending<Self> {
+        Ending { result: Err(message), streams: Streams::default(), session: (), lost_globals: false }
     }
 
-    async fn dump(&self, _session: &mut ()) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
-        Ok(Vec::new())
+    async fn dump(&self, _session: &mut ()) -> (Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>, bool) {
+        (Ok(Vec::new()), false)
     }
 
     async fn restore(
@@ -236,7 +236,7 @@ For the real reference, see `Monty` in `src/backend/monty/in_process.rs`. Its `r
 ### Rules for a backend
 
 - **Stop only for the host's tools.** Return `Progress::Call` only for a call to one of the host's tools, with keyword arguments only. The `Sandbox` passes the host's tool ids to `feed_start` and `resume`. Answer everything else inside the backend. `Monty` raises NameError for an unknown name and TypeError for a positional argument, and it gives every OS call the no-handler answer. A tool call hands the script a plain value, so a script that awaits one gets a TypeError such as `'dict' object can't be awaited`, and the session keeps its globals.
-- **An `Ending` carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. A backend that loses the globals, as `MontyPool` does when its worker crashes, gives back an empty session and sets `restarted` on the next script's `Ending`, so that script's status says the session restarted. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
+- **An `Ending` carries everything the run produced.** The `session` is idle and keeps the globals the script set, even when the script failed. A backend that loses the globals, as `MontyPool` does when its worker crashes, gives back an empty session and sets `lost_globals` on that `Ending`, or returns true from `dump`. The backend reports each loss once, when it hands the session back. The `Sandbox` keeps the notice, in its dumps too, and puts `restarted` on the next finished or failed status. The `streams` hold everything the script printed during the whole run, across every `resume`. The `Sandbox` puts the Err text in the `failed` status's `error`, so make it the traceback you want the model to read.
 - **`abort` ends the script.** The script can't catch the error, so `abort` returns an `Ending`, never a tool call. The `Sandbox` calls it when the script reaches `calls_per_execute` and when a call passes `call_timeout`.
 - **The backend enforces three limits.** `new_session` and `restore` get the `Limits`. The session stops a script at `run_time`, `memory_bytes` and `recursion_depth`. `run_time` counts only the script's own time, summed over the whole run, and not the time it waits on the host. The `Sandbox` enforces `calls_per_execute`, `call_timeout`, `idle_timeout` and `output_chars` itself.
 - **`dump` and `restore` work on idle sessions only.** The `Sandbox` calls `dump` only when no run is open, and hands an error from `dump` to the caller as Error::Dump. `restore` uses the `limits` it gets, not the limits the session was dumped with. When the caller sets `Builder::signing_key`, the `Sandbox` adds and checks the signature, so the backend sees only its own bytes.

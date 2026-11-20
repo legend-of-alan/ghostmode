@@ -54,20 +54,22 @@ pub trait Backend: Sized {
         message: String,
     ) -> impl Future<Output = Ending<Self>> + Send;
 
-    /// Drops the suspended script without running it further, and gives back its idle session
-    /// with the globals the script had set, and what it printed. A backend that can't keep the
-    /// globals gives back a session that the next script's [`Ending`] reports as restarted.
+    /// Drops the suspended script without running it further, and gives back how it ended, with
+    /// `message` as its `Err` result, the idle session with the globals the script had set, and
+    /// what it printed. A backend that can't keep the globals sets [`Ending::lost_globals`].
     fn abandon(
         &self,
         suspension: Self::Suspension,
-    ) -> impl Future<Output = (Self::Session, Streams)> + Send;
+        message: String,
+    ) -> impl Future<Output = Ending<Self>> + Send;
 
     /// The bytes of the idle `session`, which [`Backend::restore`] reads back, or why the
-    /// backend couldn't write them.
+    /// backend couldn't write them, and whether the backend lost the session's globals while it
+    /// tried, which leaves `session` empty.
     fn dump(
         &self,
         session: &mut Self::Session,
-    ) -> impl Future<Output = Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>> + Send;
+    ) -> impl Future<Output = (Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>, bool)> + Send;
 
     /// The idle session that `bytes` from [`Backend::dump`] hold, running under `limits` like a
     /// [new session](Backend::new_session), whatever limits it was dumped with.
@@ -98,12 +100,13 @@ pub struct Ending<B: Backend> {
     pub result: Result<Value, String>,
     /// What the script printed.
     pub streams: Streams,
-    /// The idle session, with the globals the script set. A backend that lost those globals
-    /// gives back an empty session, and the next script's `Ending` says it restarted.
+    /// The idle session, with the globals the script set, or an empty session if the backend
+    /// lost them.
     pub session: B::Session,
-    /// Whether the session started fresh before this script, with no globals, because the
-    /// backend lost the session it had, such as to a worker crash.
-    pub restarted: bool,
+    /// Whether the backend lost the session's globals during this run, such as to a worker
+    /// crash, so `session` is empty. The sandbox's next finished or failed status then says the
+    /// session restarted.
+    pub lost_globals: bool,
 }
 
 /// What a script printed, each stream in the order it was printed.

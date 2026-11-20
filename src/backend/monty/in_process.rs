@@ -97,16 +97,21 @@ impl Backend for Monty {
         }
     }
 
-    async fn abandon(&self, suspension: Suspension) -> (Session, Streams) {
-        let session = Session(Box::new(suspension.function_call.into_repl()));
-        (session, split_streams(suspension.streams))
+    async fn abandon(&self, suspension: Suspension, message: String) -> Ending<Self> {
+        Ending {
+            result: Err(message),
+            streams: split_streams(suspension.streams),
+            session: Session(Box::new(suspension.function_call.into_repl())),
+            lost_globals: false,
+        }
     }
 
     async fn dump(
         &self,
         Session(session): &mut Session,
-    ) -> Result<Vec<u8>, Box<dyn error::Error + Send + Sync>> {
-        ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session)).map_err(Into::into)
+    ) -> (Result<Vec<u8>, Box<dyn error::Error + Send + Sync>>, bool) {
+        let bytes = ::monty::dump(SCRIPT_NAME, None, &[], SessionRef::Idle(session));
+        (bytes.map_err(Into::into), false)
     }
 
     /// Bytes Monty can't load are a [`DumpError`]. A dump of a suspended or one-shot run is
@@ -145,7 +150,7 @@ impl Monty {
                         result: Err(failure.error.to_string()),
                         streams: split_streams(streams),
                         session: Session(Box::new(failure.repl)),
-                        restarted: false,
+                        lost_globals: false,
                     });
                 }
                 Ok(ReplProgress::Complete { repl, value }) => {
@@ -153,7 +158,7 @@ impl Monty {
                         result: Ok(value::to_json(value.as_ref())),
                         streams: split_streams(streams),
                         session: Session(Box::new(repl)),
-                        restarted: false,
+                        lost_globals: false,
                     });
                 }
                 Ok(ReplProgress::FunctionCall(mut function_call))
