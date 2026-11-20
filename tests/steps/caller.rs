@@ -3,6 +3,10 @@ use futures::FutureExt;
 
 use crate::{Request, World};
 
+/// How many bytes the header takes that starts an unsigned dump: the format version, the
+/// `restarted` byte and the 8-byte last run id.
+const DUMP_HEADER_BYTES: usize = 10;
+
 #[given(regex = r#"^a sandbox whose signing key is "([A-Z])"$"#)]
 fn sandbox_signing_key(world: &mut World, letter: char) {
     world.signing_key = Some([letter as u8; 32]);
@@ -79,6 +83,13 @@ async fn restore_dump_with_byte_flipped(world: &mut World, position: String) {
     world.restore(&bytes).await;
 }
 
+#[when("the caller restores the dump cut to its header into a new sandbox")]
+async fn restore_dump_cut_to_header(world: &mut World) {
+    let mut bytes = world.dump.clone().expect("a dump");
+    bytes.truncate(DUMP_HEADER_BYTES);
+    world.restore(&bytes).await;
+}
+
 #[when(regex = r#"^the caller restores the bytes "(.*)" into a new sandbox$"#)]
 async fn restore_bytes(world: &mut World, text: String) {
     world.restore(text.as_bytes()).await;
@@ -104,9 +115,8 @@ fn error_is_other_format_version(world: &mut World, found: u8, expected: u8) {
     let error = world.caller_error.as_ref().expect("a caller error");
     assert!(matches!(error, ghostmode::Error::Restore(_)), "{error:?}");
     let message = error.to_string();
-    assert!(message.contains(&format!("version {found}")), "{message}");
     assert!(
-        message.contains(&format!("version {expected}")),
+        message.contains(&format!("format version {found}, not version {expected}")),
         "{message}"
     );
 }
