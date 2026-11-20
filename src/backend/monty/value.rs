@@ -22,7 +22,7 @@ pub(crate) fn to_call(tool_id: String, args: &CallArgs) -> Result<host::Call, Mo
         (key, to_json(value))
     });
     let args = args.collect();
-    Ok(host::Call { tool_id, args })
+    Ok(host::Call::new(tool_id, args))
 }
 
 /// The exception a host's error raises in the script: `PermissionError` for a refusal, and
