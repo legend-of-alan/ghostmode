@@ -26,7 +26,7 @@ use monty_types::{DEFAULT_MAX_PRINT_COLLECT_BYTES, MontyException, NameLookupRes
 use serde_json::Value;
 
 use super::{SCRIPT_NAME, value};
-use crate::backend::{Ending, Progress, Sealed, Streams};
+use crate::backend::{Ending, Progress, Streams, sealed};
 use crate::host;
 use crate::sandbox::Limits;
 
@@ -193,14 +193,14 @@ impl MontyPool {
                 TurnEvent::ResolveFutures { .. } => {
                     drop(on_print);
                     let message = super::TOOLS_NOT_AWAITABLE.to_string();
-                    return Progress::Ended(self.abort(script, message).await);
+                    return Progress::Ended(sealed::Backend::abort(self, script, message).await);
                 }
             };
         }
     }
 }
 
-impl Sealed for MontyPool {
+impl sealed::Backend for MontyPool {
     type Session = Session;
     type Suspension = Suspension;
 
