@@ -15,6 +15,7 @@ Feature: The caller dumps a session as bytes and restores it into a new sandbox
     When the caller restores the dump into a new sandbox
     And the model executes while True: pass
     Then the status is failed with an error naming time limit exceeded
+    And the model waited at least 200 ms but under 10 seconds
 
   Scenario: Dumping while a run is open is an error naming the run
     Given a host whose `search` answers only when told to
