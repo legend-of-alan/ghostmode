@@ -1,4 +1,4 @@
-@pool
+@monty-pool
 Feature: A call the caller stops awaiting loses the session, and the next call starts a fresh one
 
   Scenario: Execute after a dropped execute runs in a fresh session and says it restarted
