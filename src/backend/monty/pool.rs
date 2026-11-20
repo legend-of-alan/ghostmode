@@ -51,7 +51,7 @@ use crate::sandbox::Limits;
 #[derive(Clone)]
 pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
 
-/// The `monty` worker processes a [`MontyPool`] starts. Build it with [`WorkerOptions::new`],
+/// The `monty` worker processes that a [`MontyPool`] starts. Build it with [`WorkerOptions::new`],
 /// then set its fields.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -96,8 +96,11 @@ impl WorkerOptions {
 
 impl MontyPool {
     /// A backend whose sessions each check out one of the workers that `options` describe. It
-    /// starts [`WorkerOptions::min_workers`] workers before it returns, and fails if
-    /// `min_workers` is more than the pool allows, which is one per CPU core.
+    /// starts [`WorkerOptions::min_workers`] workers before it returns. It fails if a worker
+    /// can't start from [`WorkerOptions::binary_path`], or if `min_workers` is more than the pool
+    /// allows, which is the machine's [available parallelism].
+    ///
+    /// [available parallelism]: std::thread::available_parallelism
     pub async fn new(options: WorkerOptions) -> Result<Self, Box<dyn error::Error + Send + Sync>> {
         let config = PoolConfig {
             min_processes: options.min_workers,
@@ -273,8 +276,8 @@ impl Backend for MontyPool {
         suspension.kill_worker()
     }
 
-    /// A session with no worker yet checks one out to dump. Bytes the worker can't write are a
-    /// [`PoolError`].
+    /// A session with no worker yet checks one out to dump. Bytes the worker can't write are an
+    /// `Err` that says why.
     async fn dump(
         &self,
         session: &mut Session,
@@ -291,8 +294,8 @@ impl Backend for MontyPool {
         Ok(bytes?)
     }
 
-    /// Bytes the worker can't load are a [`PoolError`]. Bytes that crash or hang the worker
-    /// harm only that worker.
+    /// Bytes the worker can't load are an `Err` that says why. Bytes that crash or hang the
+    /// worker harm only that worker.
     async fn restore(
         &self,
         bytes: &[u8],
