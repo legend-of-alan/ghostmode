@@ -189,8 +189,8 @@ impl Monty {
 /// Makes `session` stop a script at `limits`' run time, memory and recursion depth, and return
 /// from `time.sleep` at once.
 fn set_limits_and_os_policy(session: &mut MontyRepl, limits: &Limits) {
-    *session.tracker_mut() = ResourceTracker::new(super::resource_limits(limits));
-    session.set_os_policy(super::os_policy());
+    *session.tracker_mut() = ResourceTracker::new(super::to_resource_limits(limits));
+    session.set_os_policy(super::build_os_policy());
 }
 
 /// What a script printed into `streams`, split into stdout and stderr.

@@ -63,7 +63,7 @@ impl Host for Server {
         let params = CallToolRequestParams::new(mcp_id).with_arguments(call.args.clone());
         async move {
             let result = peer.call_tool(params).await;
-            to_answer(result.map_err(|err| host::Error::Failed(err.to_string()))?)
+            to_answer(result.map_err(|error| host::Error::Failed(error.to_string()))?)
         }
         .boxed()
     }
@@ -92,7 +92,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ListTools(err) => write!(f, "listing the MCP server's tools failed: {err}"),
+            Self::ListTools(error) => write!(f, "listing the MCP server's tools failed: {error}"),
             Self::SharedId {
                 tool_id,
                 mcp_ids: [first, second],
@@ -113,7 +113,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ListTools(err) => Some(err),
+            Self::ListTools(error) => Some(error),
             Self::SharedId { .. } | Self::UncallableId { .. } => None,
         }
     }
