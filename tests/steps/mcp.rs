@@ -92,7 +92,7 @@ fn server_answers_structured(world: &mut World, mcp_id: String) {
 }
 
 #[given(
-    regex = r"^(?:an MCP server whose|the MCP server's) `(\S+)` (?:also )?answers its arguments as text$"
+    regex = r"^(?:an MCP server whose|the MCP server's) `(\S*)` (?:also )?answers its arguments as text$"
 )]
 fn server_answers_text(world: &mut World, mcp_id: String) {
     let answers = &mut world.mcp.server.answers;
@@ -128,4 +128,10 @@ fn connecting_fails(world: &mut World, mcp_id: String) {
         .as_deref()
         .expect("connecting failed");
     assert!(error.contains(&mcp_id), "{error}");
+}
+
+#[then(regex = r#"^connecting fails with the error "(.*)"$"#)]
+fn connecting_fails_with_message(world: &mut World, message: String) {
+    let error = world.mcp.client_error.as_deref();
+    assert_eq!(error, Some(message.as_str()));
 }

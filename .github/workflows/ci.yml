@@ -44,10 +44,17 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
 
-      # Each check that depends on features runs once for the default build and once with every feature.
+      # Clippy and docs run with no features, the default features and every feature.
+      # Tests and license checks run the last two.
       - name: clippy
         shell: bash
-        run: for features in "" --all-features; do cargo clippy --all-targets --locked $features -- -D warnings; done
+        run: for features in --no-default-features "" --all-features; do cargo clippy --all-targets --locked $features -- -D warnings; done
+
+      - name: doc
+        shell: bash
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: for features in --no-default-features "" --all-features; do cargo doc --no-deps --locked $features; done
 
       - name: guardrails
         if: runner.os == 'Linux'

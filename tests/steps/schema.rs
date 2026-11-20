@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 
 use cucumber::gherkin::Step;
-use cucumber::{then, when};
+use cucumber::then;
 use ghostmode::host::Host;
 use ghostmode::schema;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
+use crate::World;
 use crate::test_host::parse_json;
-use crate::{Request, World};
 
 #[then(
     regex = r"^the MCP tools are `execute` and `poll`, each with a name, description and inputSchema$"
@@ -46,73 +46,23 @@ fn openai_functions_match_mcp_tools(world: &mut World) {
     }
 }
 
-/// Sends the model's call to the sandbox. Each argument is taken out as the sandbox method
-/// needs it, so a required argument the call lacks, or one the method doesn't take, fails the
-/// step.
-#[when(regex = r"^the model calls `(execute|poll)` with (\{.*\})$")]
-async fn call_model_tool(world: &mut World, tool_id: String, args: String) {
-    let mut args = parse_json(&args)
-        .as_object()
-        .cloned()
-        .expect("an args object");
-    let request = match tool_id.as_str() {
-        "execute" => Request::Execute {
-            code: take_arg(&mut args, "code").as_str().expect("code").into(),
-            restart: args
-                .remove("restart")
-                .is_some_and(|restart| restart.as_bool().expect("restart")),
-        },
-        _ => Request::Poll(take_arg(&mut args, "run_id").as_u64().expect("run_id")),
-    };
-    assert!(args.is_empty(), "{tool_id} takes no {args:?}");
-    world.send(request).await;
+#[then(regex = r"^the `(execute|poll)` input schema without descriptions is (\{.*\})$")]
+fn input_schema_without_descriptions_is(world: &mut World, tool_id: String, expected: String) {
+    let mut input_schema = input_schema_of(world, &tool_id);
+    remove_descriptions(&mut input_schema);
+    assert_eq!(input_schema, parse_json(&expected));
 }
 
-#[then(regex = r"^the `(execute|poll)` schema declares exactly (`\w+`(?: and `\w+`)*)$")]
-fn model_tool_declares_exactly(world: &mut World, tool_id: String, args: String) {
-    let input_schema = input_schema_of(world, &tool_id);
-    let arg_ids: BTreeSet<&str> = args
-        .split(" and ")
-        .map(|arg| arg.trim_matches('`'))
-        .collect();
-    assert_eq!(
-        object_keys(&input_schema["properties"]),
-        arg_ids,
-        "{input_schema}"
-    );
-}
-
-#[then(
-    regex = r"^the `(execute|poll)` schema requires exactly `(\w+)` as an? (string|integer), with additionalProperties false$"
-)]
-fn model_tool_requires_exactly(world: &mut World, tool_id: String, arg: String, arg_type: String) {
-    let input_schema = input_schema_of(world, &tool_id);
-    assert_eq!(
-        input_schema["properties"][&arg]["type"],
-        arg_type.as_str(),
-        "{input_schema}"
-    );
-    assert_eq!(
-        input_schema["required"],
-        serde_json::json!([arg]),
-        "{input_schema}"
-    );
-    assert_eq!(
-        input_schema["additionalProperties"], false,
-        "{input_schema}"
-    );
-}
-
-#[then(
-    regex = r"^the `(execute|poll)` schema declares `(\w+)` as a boolean, not required, defaulting to false$"
-)]
-fn model_tool_declares_optional_flag(world: &mut World, tool_id: String, arg: String) {
-    let input_schema = input_schema_of(world, &tool_id);
-    let property = &input_schema["properties"][&arg];
-    assert_eq!(property["type"], "boolean", "{input_schema}");
-    assert_eq!(property["default"], false, "{input_schema}");
-    let required = input_schema["required"].as_array().expect("required");
-    assert!(!required.contains(&Value::from(arg)), "{input_schema}");
+/// Removes the `description` key from the JSON schema `schema` and from each of its
+/// `properties`.
+fn remove_descriptions(schema: &mut Value) {
+    let object = schema.as_object_mut().expect("a schema object");
+    object.remove("description");
+    if let Some(Value::Object(properties)) = object.get_mut("properties") {
+        for property in properties.values_mut() {
+            remove_descriptions(property);
+        }
+    }
 }
 
 /// The input schema of the model's tool `tool_id` that `list_mcp_tools` lists for the
@@ -142,18 +92,21 @@ fn execute_description_lacks(world: &mut World, text: String) {
     assert!(!description.contains(&text), "{description}");
 }
 
+#[then(regex = r"^`(\S+)` is (not )?a Python identifier$")]
+fn id_is_python_identifier(_world: &mut World, id: String, negation: String) {
+    assert_eq!(
+        schema::is_python_identifier(&id),
+        negation.is_empty(),
+        "{id}"
+    );
+}
+
 /// The description of the `execute` tool that `list_mcp_tools` lists for the scenario's host.
 fn execute_description(world: &World) -> String {
     let tools = schema::list_mcp_tools(&world.host.tools());
     let execute = tools.iter().find(|tool| tool["name"] == "execute");
     let description = execute.expect("execute")["description"].as_str();
     description.expect("a description").to_owned()
-}
-
-/// Removes the argument `id` from the model's call, failing if the call doesn't have it.
-fn take_arg(args: &mut Map<String, Value>, id: &str) -> Value {
-    args.remove(id)
-        .unwrap_or_else(|| panic!("the call has no `{id}`"))
 }
 
 /// The keys of the JSON object `value`.

@@ -4,7 +4,7 @@
 //! Containers become arrays or objects, an `int` too big for 64 bits becomes its digit string,
 //! and any other value, such as a float JSON can't hold, becomes its `repr`.
 
-use monty_types::unstable::{self, MontyNode};
+use monty_types::unstable::{self, MontyGraph, MontyNode, NodeId};
 use monty_types::{CallArgs, ExcType, MontyException, MontyObject, ObjectRef};
 use serde_json::{Map, Number, Value};
 
@@ -58,23 +58,37 @@ pub(crate) fn to_json(value: ObjectRef<'_>) -> Value {
     }
 }
 
-/// The Python value a script sees for a JSON value.
+/// The Python value a script sees for a JSON value, built in one arena.
 pub(crate) fn from_json(value: &Value) -> MontyObject {
-    match value {
-        Value::Null => MontyObject::none(),
-        Value::Bool(value) => MontyObject::bool(*value),
+    let mut graph = MontyGraph::new();
+    let root = push_json(value, &mut graph);
+    unstable::object_from_graph(graph, root).expect("push_json returns the id of a node it pushed")
+}
+
+/// Pushes a JSON value's nodes onto `graph`, children first, and returns the id of its root.
+fn push_json(value: &Value, graph: &mut MontyGraph) -> NodeId {
+    let node = match value {
+        Value::Null => MontyNode::None,
+        Value::Bool(value) => MontyNode::Bool(*value),
         Value::Number(number) => match number.as_i64() {
-            Some(int) => MontyObject::int(int),
-            None => MontyObject::float(number.as_f64().unwrap_or(f64::NAN)),
+            Some(int) => MontyNode::Int(int),
+            None => MontyNode::Float(number.as_f64().unwrap_or(f64::NAN)),
         },
-        Value::String(text) => MontyObject::string(text.as_str()),
-        Value::Array(items) => MontyObject::list(items.iter().map(from_json)),
-        Value::Object(object) => MontyObject::dict(
+        Value::String(text) => MontyNode::String(text.clone()),
+        Value::Array(items) => {
+            MontyNode::List(items.iter().map(|item| push_json(item, graph)).collect())
+        }
+        Value::Object(object) => MontyNode::Dict(
             object
                 .iter()
-                .map(|(key, value)| (MontyObject::string(key.as_str()), from_json(value))),
+                .map(|(key, value)| {
+                    let key = graph.push(MontyNode::String(key.clone()));
+                    (key, push_json(value, graph))
+                })
+                .collect(),
         ),
-    }
+    };
+    graph.push(node)
 }
 
 /// A dict key as a JSON object key: a `str` as it is, anything else as its JSON text.
