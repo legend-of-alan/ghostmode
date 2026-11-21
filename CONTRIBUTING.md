@@ -47,6 +47,14 @@ Every issue gets a priority label from `P0` (most urgent) to `P3` (low). It also
 
 Behavior is tested with cucumber scenarios. Feature files live in `tests/features/<area>/`, shared Given/When/Then steps live in `tests/steps/`, and `tests/features.rs` holds the one `World` and runs the whole tree once per executor. Run one scenario with `cargo test --test features -- --name "<regex>"`. A plain `#[test]` is only for what a scenario can't express, such as `tests/doc_code_names.rs`.
 
+The `@live` scenarios in `tests/features/live/tasks.feature` have Claude Sonnet answer five questions with only `execute` and `poll`, three tries each. `.github/workflows/live-ai.yml` runs them weekly on `main`. They cost money, about $0.35 a run, and stop sending requests once a run's usage passes $0.75. `cargo test` skips them unless `GHOSTMODE_LIVE_KEY` is set. To run them locally, set it to a normal Anthropic API key, and they run alone, once:
+
+```sh
+GHOSTMODE_LIVE_KEY=<your API key> cargo test --locked --test features
+```
+
+`GHOSTMODE_LIVE_MODEL` picks another model than `claude-sonnet-5-5`.
+
 A scenario earns its place by failing when something a caller would notice changes. Check a new scenario against this list before you add it.
 
 - **Extend, don't duplicate.** If a scenario already shows the behavior, extend or rename it instead of adding another. One scenario can cover several acceptance criteria, so you don't need one per item.
