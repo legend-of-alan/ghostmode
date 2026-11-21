@@ -58,8 +58,8 @@ const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(5);
 /// ```
 ///
 /// The worker runs the script, but the thread that polls `execute` or `poll` still converts
-/// values between JSON and Python and cuts output to [`Limits::output_chars`]. The thread that
-/// polls `Builder::restore` checks a dump's signature.
+/// values between JSON and Python and truncates output to [`Limits::output_chars`]. The thread
+/// that polls `Builder::restore` checks a dump's signature.
 ///
 /// [available parallelism]: std::thread::available_parallelism
 #[derive(Clone)]
