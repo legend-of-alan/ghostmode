@@ -15,7 +15,8 @@ async fn execute_code(world: &mut World, code: String, with_restart: String) {
 
 #[when(regex = r"^the model executes this script:$")]
 async fn execute_docstring(world: &mut World, step: &Step) {
-    let code = step.docstring.clone().expect("a script docstring");
+    let docstring = step.docstring.as_deref().expect("a script docstring");
+    let code = docstring.strip_prefix('\n').unwrap_or(docstring).to_owned();
     let restart = false;
     world.send(Request::Execute { code, restart }).await;
 }

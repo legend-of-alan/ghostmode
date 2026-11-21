@@ -140,3 +140,25 @@ fn connecting_fails_with_message(world: &mut World, message: String) {
     let error = world.mcp.client_error.as_deref();
     assert_eq!(error, Some(message.as_str()));
 }
+
+#[then(
+    regex = r"^rmcp reads the MCP definitions as the tools `execute` and `poll` with their schemas$"
+)]
+async fn rmcp_reads_definitions(world: &mut World) {
+    let definitions = ghostmode::schema::mcp_definitions(world.sandbox_tools().await);
+    let mut tool_ids = Vec::new();
+    for definition in definitions {
+        let tool: Tool = serde_json::from_value(definition.clone())
+            .unwrap_or_else(|err| panic!("rmcp can't read {definition}: {err}"));
+        assert_eq!(
+            Value::Object((*tool.input_schema).clone()),
+            definition["inputSchema"]
+        );
+        assert_eq!(
+            tool.description.as_deref(),
+            definition["description"].as_str()
+        );
+        tool_ids.push(tool.name.into_owned());
+    }
+    assert_eq!(tool_ids, ["execute", "poll"]);
+}
