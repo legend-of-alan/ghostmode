@@ -111,7 +111,9 @@ async fn add_and_list_notes() {
     let host = Notes { notes: Arc::default(), read_only: false };
     let mut sandbox = Builder::new(host, Monty::default()).build().await;
     let status = sandbox.execute("add_note(text='hi')\nlist_notes()", false).await;
+#   assert_eq!(json!(status), json!({"status": "finished", "value": ["hi"]}));
 }
+# futures::executor::block_on(add_and_list_notes());
 ```
 
 The `status` serializes as `{"status": "finished", "value": ["hi"]}`.
