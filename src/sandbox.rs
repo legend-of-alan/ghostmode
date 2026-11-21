@@ -97,9 +97,11 @@ pub struct Limits {
     pub idle_timeout: Option<Duration>,
     /// How many characters of output a status carries: a finished value or an error, together
     /// with what the script printed to stdout and stderr. Output over it keeps its head and
-    /// tail around a marker such as `[… 60,000 of 100,000 characters cut …]`, and a value cut
-    /// this way becomes a string. A value is counted as its JSON text, except a string, which
-    /// is counted as its own text. The default is 40,000.
+    /// tail around a marker such as `[… 60,000 of 100,000 characters cut …]`, the marker
+    /// counted inside it, and a value cut this way becomes a string. A budget smaller than the
+    /// marker keeps the marker alone. A value is counted as its JSON text, except a string,
+    /// which is counted as its own text. The arguments of a failed status's calls get as many
+    /// characters again, split evenly over `calls_per_execute` calls. The default is 40,000.
     pub output_chars: usize,
 }
 
@@ -140,8 +142,10 @@ pub enum Status {
         /// What went wrong, such as the script's traceback.
         error: String,
         /// Every tool call the host answered in the run, refused and failed ones too. Each
-        /// argument is cut to its share of [`Limits::output_chars`], which is
-        /// `output_chars / calls_per_execute`.
+        /// call's arguments, names included, are cut to the call's share of
+        /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
+        /// calls' arguments together stay within `output_chars`. Each argument, in the order of
+        /// `args`, gets what is left of the share, and the arguments past the share are dropped.
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
@@ -512,18 +516,27 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
     }
 
-    /// `call` with each argument cut to its share of [`Limits::output_chars`], which is
-    /// `output_chars / calls_per_execute`.
+    /// `call` with its arguments, names included, cut to its share of [`Limits::output_chars`],
+    /// which is `output_chars / calls_per_execute`. Each argument, in the order of `args`, gets
+    /// what is left of the share, and the arguments past the share are dropped.
     fn cut_args(&self, mut call: host::Call) -> host::Call {
         let limits = &self.builder.limits;
-        let share = limits.output_chars / limits.calls_per_execute.max(1);
-        for value in call.args.values_mut() {
-            let text = to_text(value);
-            let cut = cut_text(&text, text.chars().count(), share);
+        let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
+        for (name, value) in mem::take(&mut call.args) {
+            let Some(value_share) = chars_left.checked_sub(name.chars().count()) else {
+                break;
+            };
+            let text = to_text(&value);
+            let text_chars = text.chars().count();
+            let cut = cut_text(&text, text_chars, value_share);
             drop(text);
-            if let Some(cut) = cut {
-                *value = Value::String(cut);
+            let value_chars = cut.as_ref().map_or(text_chars, |cut| cut.chars().count());
+            let value = cut.map_or(value, Value::String);
+            if value_chars > value_share {
+                break;
             }
+            chars_left = value_share - value_chars;
+            call.args.insert(name, value);
         }
         call
     }
@@ -766,17 +779,24 @@ fn to_text(value: &Value) -> Cow<'_, str> {
     }
 }
 
-/// `text`, which is `text_chars` characters long, cut to its first and last characters, up to
-/// `max_chars` in all, around a marker such as `[… 60,000 of 100,000 characters cut …]`. `None`
-/// if `text` already fits in `max_chars`.
+/// `text`, which is `text_chars` characters long, cut to its first and last characters around a
+/// marker such as `[… 60,000 of 100,000 characters cut …]`, up to `max_chars` in all with the
+/// marker, or to the marker alone when `max_chars` is smaller than it. `None` if `text` already
+/// fits in `max_chars`.
 fn cut_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
     if text_chars <= max_chars {
         return None;
     }
-    let tail_chars = max_chars / 2;
+    let total_count = group_thousands(text_chars);
+    let format_marker = |kept_chars| {
+        let cut_count = group_thousands(text_chars - kept_chars);
+        format!("[… {cut_count} of {total_count} characters cut …]")
+    };
+    let kept_chars = max_chars.saturating_sub(format_marker(0).chars().count());
+    let tail_chars = kept_chars / 2;
     let head_end = text
         .char_indices()
-        .nth(max_chars - tail_chars)
+        .nth(kept_chars - tail_chars)
         .map_or(text.len(), |(byte, _)| byte);
     let tail_start = text
         .char_indices()
@@ -786,11 +806,7 @@ fn cut_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
         .map_or(text.len(), |(byte, _)| byte);
     let head = &text[..head_end];
     let tail = &text[tail_start..];
-    let cut_count = group_thousands(text_chars - max_chars);
-    let total_count = group_thousands(text_chars);
-    Some(format!(
-        "{head}[… {cut_count} of {total_count} characters cut …]{tail}"
-    ))
+    Some(format!("{head}{}{tail}", format_marker(kept_chars)))
 }
 
 /// `number` in digits with a comma between each group of three, such as `100,000`.
