@@ -20,6 +20,11 @@ pub(crate) enum Answer {
     Held,
     /// A list nested `depth` levels, built when the script calls the tool.
     NestedList(usize),
+    /// Answers `value` when the call gives the argument `arg`, and fails otherwise.
+    ValueIfGiven {
+        arg: String,
+        value: Value,
+    },
 }
 
 /// A host whose tools answer as the scenario's Given steps set up.
@@ -30,6 +35,8 @@ pub(crate) struct TestHost {
     /// The sending halves that answer `Answer::Held` calls by tool id, from a When step to the
     /// call's future.
     pub(crate) held_calls: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    /// The answer each `Answer::Held` call gets when the model polls, by tool id.
+    pub(crate) answers_on_poll: HashMap<String, Value>,
     /// The host over the scenario's MCP server, whose tools this host offers beside its own.
     pub(crate) mcp_client: Option<Arc<dyn Host + Send + Sync>>,
     /// The input schema of each tool a Given step set one for, by tool id. Other tools take
@@ -81,6 +88,14 @@ impl Host for TestHost {
                 }
                 future::ready(Ok(value)).boxed()
             }
+            Answer::ValueIfGiven { arg, value } => {
+                let answer = if call.args.contains_key(&arg) {
+                    Ok(value)
+                } else {
+                    Err(host::Error::Failed(format!("missing argument `{arg}`")))
+                };
+                future::ready(answer).boxed()
+            }
             Answer::Held => {
                 let (sender, receiver) = oneshot::channel();
                 let held_calls = &mut self.held_calls.lock().expect("held calls");
@@ -127,6 +142,42 @@ fn host_fails(world: &mut World, tool_id: String, message: String) {
 #[given(regex = r"^a host whose `(\w+)` answers only when told to$")]
 fn host_holds(world: &mut World, tool_id: String) {
     world.host.answers.insert(tool_id, Answer::Held);
+}
+
+#[given(regex = r"^a host whose `(\w+)` holds its answer (\{.*\}) until the model polls$")]
+fn host_holds_until_poll(world: &mut World, tool_id: String, answer: String) {
+    let host = &mut world.host;
+    host.answers.insert(tool_id.clone(), Answer::Held);
+    host.answers_on_poll.insert(tool_id, parse_json(&answer));
+}
+
+#[given(regex = r"^a host whose `(\w+)` needs `([^`]+)` and then answers (\{.*\})$")]
+fn host_needs_arg(world: &mut World, tool_id: String, arg: String, answer: String) {
+    let value = parse_json(&answer);
+    let answer = Answer::ValueIfGiven { arg, value };
+    world.host.answers.insert(tool_id, answer);
+}
+
+#[given(
+    regex = r#"^a host whose `(\w+)` answers a (\d+) character log with "(.+)" on its middle line$"#
+)]
+fn host_answers_log(world: &mut World, tool_id: String, chars: usize, middle_line: String) {
+    let mut log = String::new();
+    let mut line_number = 0;
+    let mut push_lines_until = |log: &mut String, len: usize| {
+        while log.len() < len {
+            line_number += 1;
+            log.push_str(&format!("line {line_number:05}: INFO request served\n"));
+        }
+    };
+    push_lines_until(&mut log, chars / 2);
+    log.push_str(&format!("{middle_line}\n"));
+    push_lines_until(&mut log, chars);
+    log.truncate(chars);
+    world
+        .host
+        .answers
+        .insert(tool_id, Answer::Value(log.into()));
 }
 
 #[given(regex = r"^a host whose `(\w+)` input schema is (\{.*\})$")]

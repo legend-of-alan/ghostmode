@@ -1,0 +1,100 @@
+name: Live AI
+
+# Claude Sonnet finishes the @live tasks in tests/features/live/tasks.feature with only execute and poll.
+# It never runs on pull requests, so a PR's code never gets a token.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  live:
+    name: Claude finishes the live tasks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GHOSTMODE_LIVE_MODEL: ${{ vars.GHOSTMODE_LIVE_MODEL }}
+    steps:
+      - name: Check the federation secrets
+        id: ids
+        shell: bash
+        env:
+          HAS_IDS: ${{ secrets.ANTHROPIC_FEDERATION_RULE_ID != '' && secrets.ANTHROPIC_ORGANIZATION_ID != '' && secrets.ANTHROPIC_SERVICE_ACCOUNT_ID != '' && secrets.ANTHROPIC_WORKSPACE_ID != '' }}
+        run: |
+          if [ "$HAS_IDS" != true ]; then
+            echo "::notice::Skipped: set the ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID and ANTHROPIC_WORKSPACE_ID repository secrets."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.ids.outputs.ready == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - if: steps.ids.outputs.ready == 'true'
+        run: rustup toolchain install && rustc --version
+
+      - if: steps.ids.outputs.ready == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: build
+        if: steps.ids.outputs.ready == 'true'
+        run: cargo test --locked --test features --no-run
+
+      # The access token lasts at most twice the time left on the GitHub JWT, so the exchange runs in the test step.
+      - name: GitHub OIDC token
+        id: oidc
+        if: steps.ids.outputs.ready == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const jwt = await core.getIDToken('https://api.anthropic.com');
+            core.setSecret(jwt);
+            core.setOutput('jwt', jwt);
+
+      # The access token stays in this step: it never reaches GITHUB_ENV, a later step or rust-cache's post step.
+      # Workflow commands stop while the tests run, so the model's scripts and replies in the log can't send any.
+      - name: live tasks
+        if: steps.ids.outputs.ready == 'true'
+        timeout-minutes: 9
+        shell: bash
+        env:
+          JWT: ${{ steps.oidc.outputs.jwt }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ secrets.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ secrets.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ secrets.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          response=$(jq -n '{
+              grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              assertion: env.JWT,
+              federation_rule_id: env.ANTHROPIC_FEDERATION_RULE_ID,
+              organization_id: env.ANTHROPIC_ORGANIZATION_ID,
+              service_account_id: env.ANTHROPIC_SERVICE_ACCOUNT_ID,
+              workspace_id: env.ANTHROPIC_WORKSPACE_ID
+            }' \
+            | curl --silent --show-error --write-out '\n%{http_code}' --header 'content-type: application/json' --data-binary @- https://api.anthropic.com/v1/oauth/token)
+          code=${response##*$'\n'}
+          body=${response%$'\n'*}
+          if [ "$code" != 200 ]; then
+            echo "::error::The token exchange answered HTTP $code: $body"
+            exit 1
+          fi
+          token=$(jq -r '.access_token // empty' <<< "$body")
+          [ -n "$token" ] || { echo "::error::The token exchange answered no access_token."; exit 1; }
+          echo "::add-mask::$token"
+          resume=$(cat /proc/sys/kernel/random/uuid)
+          echo "::stop-commands::$resume"
+          status=0
+          env -u JWT -u ANTHROPIC_FEDERATION_RULE_ID -u ANTHROPIC_ORGANIZATION_ID -u ANTHROPIC_SERVICE_ACCOUNT_ID -u ANTHROPIC_WORKSPACE_ID \
+            GHOSTMODE_LIVE_KEY="$token" cargo test --locked --test features || status=$?
+          echo "::$resume::"
+          exit "$status"

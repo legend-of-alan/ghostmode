@@ -1,10 +1,13 @@
 //! The feature scenarios: one `World`, run once per executor against `backend::Monty`, and once
-//! more against `backend::MontyPool` when the `monty-pool` feature is on.
+//! more against `backend::MontyPool` when the `monty-pool` feature is on. With
+//! `GHOSTMODE_LIVE_KEY` set, only the `@live` scenarios run, once, on the first executor.
 
 #[path = "steps/caller.rs"]
 mod caller;
 #[path = "steps/limits.rs"]
 mod limits;
+#[path = "steps/live.rs"]
+mod live;
 #[cfg(feature = "rmcp")]
 #[path = "steps/mcp.rs"]
 mod mcp;
@@ -47,6 +50,8 @@ struct World {
     #[cfg(feature = "monty-pool")]
     other_sandboxes: Vec<Box<dyn AnySandbox>>,
     status: serde_json::Value,
+    /// What Claude replied in each live try, or why the try failed.
+    live_replies: Vec<Result<String, String>>,
     cancel_returned: Option<bool>,
     dump: Option<Vec<u8>>,
     caller_error: Option<ghostmode::Error>,
@@ -246,8 +251,9 @@ async fn build<B: Backend + Send + 'static>(
 /// Runs the whole feature tree once against `backend` and says whether any scenario failed. A
 /// feature tagged `@rmcp` needs the `rmcp` feature and a Tokio runtime, so it runs only when it
 /// has both. A feature or scenario tagged `@monty` or `@monty-pool` runs only against that
-/// backend. A `--name` regex narrows the run to the scenarios it matches, and these rules still
-/// apply.
+/// backend. A feature or scenario tagged `@live` runs only when `GHOSTMODE_LIVE_KEY` is set, and
+/// then nothing else does. A `--name` regex narrows the run to the scenarios it matches, and these
+/// rules still apply.
 async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
     let run_rmcp = on_tokio && cfg!(feature = "rmcp");
     let backend_tag = match backend {
@@ -257,6 +263,7 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
     };
     let mut cli = cucumber::cli::Opts::parsed();
     let name_filter = cli.re_filter.take();
+    let live_run = live::credential().is_some();
     World::cucumber()
         .max_concurrent_scenarios(1)
         .fail_on_skipped()
@@ -267,12 +274,14 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
         .with_cli::<cucumber::cli::Empty>(cli)
         .filter_run("tests/features", move |feature, _, scenario| {
             let runs_rmcp = run_rmcp || !feature.tags.iter().any(|tag| tag == "rmcp");
-            let runs_here = (feature.tags.iter().chain(&scenario.tags))
+            let mut tags = feature.tags.iter().chain(&scenario.tags);
+            let is_live = tags.clone().any(|tag| tag == "live");
+            let runs_here = tags
                 .all(|tag| !["monty", "monty-pool"].contains(&tag.as_str()) || tag == backend_tag);
             let named = name_filter
                 .as_ref()
                 .is_none_or(|name| name.is_match(&scenario.name));
-            runs_rmcp && runs_here && named
+            runs_rmcp && runs_here && named && is_live == live_run
         })
         .await
         .execution_has_failed()
@@ -291,6 +300,12 @@ fn find_worker_binary() -> std::path::PathBuf {
 }
 
 fn main() {
+    if live::credential().is_some() {
+        println!("executor: futures::executor::block_on, live scenarios only");
+        let failed = futures::executor::block_on(run_scenarios(false, TestBackend::Monty));
+        live::print_run_usage();
+        std::process::exit(i32::from(failed));
+    }
     println!("executor: futures::executor::block_on");
     let mut failed = futures::executor::block_on(run_scenarios(false, TestBackend::Monty));
     println!("executor: Tokio current-thread runtime");
