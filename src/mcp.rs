@@ -1,4 +1,7 @@
 //! A host over a connected MCP client, so a script can call the MCP server's tools.
+//!
+//! rmcp's `Peer` and `ServiceError` are part of this API, so a new rmcp major version is a
+//! breaking ghostmode release.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -92,7 +95,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ListTools(error) => write!(f, "listing the MCP server's tools failed: {error}"),
+            Self::ListTools(_) => f.write_str("listing the MCP server's tools failed"),
             Self::SharedId {
                 tool_id,
                 mcp_ids: [first, second],
