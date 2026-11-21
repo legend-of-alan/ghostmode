@@ -88,8 +88,8 @@ async fn restore_dump_with_byte_flipped(world: &mut World, position: String) {
     world.restore(&bytes).await;
 }
 
-#[when("the caller restores the dump cut to its header into a new sandbox")]
-async fn restore_dump_cut_to_header(world: &mut World) {
+#[when("the caller restores the dump truncated to its header into a new sandbox")]
+async fn restore_dump_truncated_to_header(world: &mut World) {
     let mut bytes = world.dump.clone().expect("a dump");
     bytes.truncate(DUMP_HEADER_BYTES);
     world.restore(&bytes).await;

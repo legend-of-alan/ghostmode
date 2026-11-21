@@ -54,6 +54,11 @@ pub struct Call {
     pub tool_id: String,
     /// The call's keyword arguments.
     pub args: Map<String, Value>,
+    /// The arguments a failed status dropped from `args` to fit the output budget, as their JSON
+    /// text truncated around a marker, serialized as the `truncated_args` key in the call's JSON.
+    /// `None`, and left out of the JSON, if none were dropped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) truncated_args: Option<String>,
 }
 
 impl Call {
@@ -62,6 +67,7 @@ impl Call {
         Self {
             tool_id: tool_id.into(),
             args,
+            truncated_args: None,
         }
     }
 }

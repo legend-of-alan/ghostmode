@@ -8,7 +8,7 @@ use futures_timer::Delay;
 use futures_util::future::{self, BoxFuture, Either, FutureExt};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
@@ -99,9 +99,9 @@ pub struct Limits {
     pub idle_timeout: Option<Duration>,
     /// How many characters of output a status carries: a finished value or an error, together
     /// with what the script printed to stdout and stderr. Output over it keeps its head and
-    /// tail around a marker such as `[… 60,000 of 100,000 characters cut …]`, the marker
-    /// counted inside it, and a value cut this way becomes a string. A budget smaller than the
-    /// marker keeps the marker alone. A value is counted as its JSON text, except a string,
+    /// tail around a marker such as `[… 60,000 of 100,000 characters truncated …]`, the marker
+    /// counted inside it, and a value truncated this way becomes a string. A budget smaller than
+    /// the marker keeps the marker alone. A value is counted as its JSON text, except a string,
     /// which is counted as its own text. The arguments of a failed status's calls get as many
     /// characters again, split evenly over `calls_per_execute` calls. The default is 40,000.
     pub output_chars: usize,
@@ -144,10 +144,14 @@ pub enum Status {
         /// What went wrong, such as the script's traceback.
         error: String,
         /// Every tool call the host answered in the run, refused and failed ones too. Each
-        /// call's arguments, names included, are cut to the call's share of
+        /// call's arguments, names included, are truncated to the call's share of
         /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
         /// calls' arguments together stay within `output_chars`. Each argument, in the order of
-        /// `args`, gets what is left of the share, and the arguments past the share are dropped.
+        /// `args`, gets what is left of the share. The arguments past the share are dropped, and
+        /// the call's JSON gains a `truncated_args` key next to `args`, which holds their JSON
+        /// text truncated to what is left. Kept arguments from the end of `args` join the dropped
+        /// ones until that text's marker fits. If no argument is kept and the share is smaller
+        /// than the marker, `truncated_args` is the marker alone.
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
@@ -405,7 +409,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             } = run;
             let progress = match answer {
                 Some(answer) => {
-                    answered_calls.push(self.cut_args(call));
+                    answered_calls.push(self.truncate_args(call));
                     Span::current().record("call_count", answered_calls.len());
                     self.builder
                         .backend
@@ -500,22 +504,22 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             stdout_chars + stderr_chars,
         );
         let (stdout_share, stderr_share) = split_budget(streams_share, stdout_chars, stderr_chars);
-        let result_cut = cut_text(&result_text, result_chars, result_share);
+        let result_truncated = truncate_text(&result_text, result_chars, result_share);
         drop(result_text);
         let stdout = (!stdout.is_empty())
-            .then(|| cut_text(&stdout, stdout_chars, stdout_share).unwrap_or(stdout));
+            .then(|| truncate_text(&stdout, stdout_chars, stdout_share).unwrap_or(stdout));
         let stderr = (!stderr.is_empty())
-            .then(|| cut_text(&stderr, stderr_chars, stderr_share).unwrap_or(stderr));
+            .then(|| truncate_text(&stderr, stderr_chars, stderr_share).unwrap_or(stderr));
         let restarted = mem::replace(&mut self.unreported_restart, lost_globals);
         match result {
             Ok(value) => Status::Finished {
-                value: result_cut.map_or(value, Value::String),
+                value: result_truncated.map_or(value, Value::String),
                 stdout,
                 stderr,
                 restarted,
             },
             Err(error) => Status::Failed {
-                error: result_cut.unwrap_or(error),
+                error: result_truncated.unwrap_or(error),
                 calls: answered_calls,
                 stdout,
                 stderr,
@@ -524,28 +528,55 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
     }
 
-    /// `call` with its arguments, names included, cut to its share of [`Limits::output_chars`],
-    /// which is `output_chars / calls_per_execute`. Each argument, in the order of `args`, gets
-    /// what is left of the share, and the arguments past the share are dropped.
-    fn cut_args(&self, mut call: host::Call) -> host::Call {
+    /// `call` with its arguments, names included, truncated to its share of
+    /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`. Each argument, in
+    /// the order of `args`, gets what is left of the share. The arguments past the share are
+    /// dropped from `args`, and their JSON text, truncated to what is left, goes in
+    /// `truncated_args`. Kept arguments from the end of `args` join the dropped ones until that
+    /// text's marker fits, or until none is kept and `truncated_args` is the marker alone.
+    fn truncate_args(&self, mut call: host::Call) -> host::Call {
         let limits = &self.builder.limits;
         let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
+        let mut kept = Vec::new();
+        let mut dropped = Map::new();
         for (name, value) in mem::take(&mut call.args) {
-            let Some(value_share) = chars_left.checked_sub(name.chars().count()) else {
-                break;
-            };
-            let text = to_text(&value);
-            let text_chars = text.chars().count();
-            let cut = cut_text(&text, text_chars, value_share);
-            drop(text);
-            let value_chars = cut.as_ref().map_or(text_chars, |cut| cut.chars().count());
-            let value = cut.map_or(value, Value::String);
-            if value_chars > value_share {
-                break;
+            let name_chars = name.chars().count();
+            if dropped.is_empty()
+                && let Some(value_share) = chars_left.checked_sub(name_chars)
+            {
+                let text = to_text(&value);
+                let text_chars = text.chars().count();
+                let truncated = truncate_text(&text, text_chars, value_share);
+                drop(text);
+                let value_chars = truncated
+                    .as_ref()
+                    .map_or(text_chars, |text| text.chars().count());
+                if value_chars <= value_share {
+                    chars_left = value_share - value_chars;
+                    kept.push((name, value, truncated, name_chars + value_chars));
+                    continue;
+                }
             }
-            chars_left = value_share - value_chars;
-            call.args.insert(name, value);
+            dropped.insert(name, value);
         }
+        if !dropped.is_empty() {
+            let mut text_chars = json_chars(&dropped);
+            while text_chars > chars_left
+                && chars_left < truncation_marker(text_chars, text_chars).chars().count()
+                && let Some((name, value, _, used_chars)) = kept.pop()
+            {
+                text_chars += json_chars(&name) + ":".len() + json_chars(&value) + ",".len();
+                chars_left += used_chars;
+                dropped.insert(name, value);
+            }
+            let text = serde_json::to_string(&dropped).expect("a Map always serializes");
+            call.truncated_args =
+                Some(truncate_text(&text, text_chars, chars_left).unwrap_or(text));
+        }
+        call.args = kept
+            .into_iter()
+            .map(|(name, value, truncated, _)| (name, truncated.map_or(value, Value::String)))
+            .collect();
         call
     }
 
@@ -782,7 +813,7 @@ impl Status {
     }
 }
 
-/// The text that `value` is measured by against [`Limits::output_chars`], and cut from when it
+/// The text that `value` is measured by against [`Limits::output_chars`], and truncated when it
 /// doesn't fit: a string's own text, or any other value's JSON text.
 fn to_text(value: &Value) -> Cow<'_, str> {
     match value {
@@ -791,20 +822,16 @@ fn to_text(value: &Value) -> Cow<'_, str> {
     }
 }
 
-/// `text`, which is `text_chars` characters long, cut to its first and last characters around a
-/// marker such as `[… 60,000 of 100,000 characters cut …]`, up to `max_chars` in all with the
-/// marker, or to the marker alone when `max_chars` is smaller than it. `None` if `text` already
-/// fits in `max_chars`.
-fn cut_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
+/// `text`, which is `text_chars` characters long, truncated to its first and last characters
+/// around a marker such as `[… 60,000 of 100,000 characters truncated …]`, up to `max_chars` in
+/// all with the marker, or to the marker alone when `max_chars` is smaller than it. `None` if
+/// `text` already fits in `max_chars`.
+fn truncate_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
     if text_chars <= max_chars {
         return None;
     }
-    let total_count = group_thousands(text_chars);
-    let format_marker = |kept_chars| {
-        let cut_count = group_thousands(text_chars - kept_chars);
-        format!("[… {cut_count} of {total_count} characters cut …]")
-    };
-    let kept_chars = max_chars.saturating_sub(format_marker(0).chars().count());
+    let longest_marker = truncation_marker(text_chars, text_chars);
+    let kept_chars = max_chars.saturating_sub(longest_marker.chars().count());
     let tail_chars = kept_chars / 2;
     let head_end = text
         .char_indices()
@@ -818,7 +845,24 @@ fn cut_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
         .map_or(text.len(), |(byte, _)| byte);
     let head = &text[..head_end];
     let tail = &text[tail_start..];
-    Some(format!("{head}{}{tail}", format_marker(kept_chars)))
+    let marker = truncation_marker(text_chars - kept_chars, text_chars);
+    Some(format!("{head}{marker}{tail}"))
+}
+
+/// The marker that stands in for `truncated_chars` characters truncated from a text of
+/// `text_chars` characters, such as `[… 60,000 of 100,000 characters truncated …]`.
+fn truncation_marker(truncated_chars: usize, text_chars: usize) -> String {
+    let truncated_count = group_thousands(truncated_chars);
+    let total_count = group_thousands(text_chars);
+    format!("[… {truncated_count} of {total_count} characters truncated …]")
+}
+
+/// How many characters `value`'s JSON text has.
+fn json_chars(value: &impl Serialize) -> usize {
+    serde_json::to_string(value)
+        .expect("a Map, Value or String always serializes")
+        .chars()
+        .count()
 }
 
 /// `number` in digits with a comma between each group of three, such as `100,000`.
