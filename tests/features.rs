@@ -249,8 +249,8 @@ async fn build<B: Backend + Send + 'static>(
 }
 
 /// Runs the whole feature tree once against `backend` and says whether any scenario failed. A
-/// feature tagged `@rmcp` needs the `rmcp` feature and a Tokio runtime, so it runs only when it
-/// has both. A feature or scenario tagged `@monty` or `@monty-pool` runs only against that
+/// feature or scenario tagged `@rmcp` needs the `rmcp` feature and a Tokio runtime, so it runs only
+/// when it has both. A feature or scenario tagged `@monty` or `@monty-pool` runs only against that
 /// backend. A feature or scenario tagged `@live` runs only when `GHOSTMODE_LIVE_KEY` is set, and
 /// then nothing else does. A `--name` regex narrows the run to the scenarios it matches, and these
 /// rules still apply.
@@ -273,8 +273,8 @@ async fn run_scenarios(on_tokio: bool, backend: TestBackend) -> bool {
         })
         .with_cli::<cucumber::cli::Empty>(cli)
         .filter_run("tests/features", move |feature, _, scenario| {
-            let runs_rmcp = run_rmcp || !feature.tags.iter().any(|tag| tag == "rmcp");
             let mut tags = feature.tags.iter().chain(&scenario.tags);
+            let runs_rmcp = run_rmcp || !tags.clone().any(|tag| tag == "rmcp");
             let is_live = tags.clone().any(|tag| tag == "live");
             let runs_here = tags
                 .all(|tag| !["monty", "monty-pool"].contains(&tag.as_str()) || tag == backend_tag);
