@@ -51,8 +51,9 @@ impl Usage {
         self.output_tokens += tokens("output_tokens");
     }
 
-    /// The price in US dollars at Sonnet 5.5's rates: $2 per million input tokens, $2.50 per
-    /// million cache writes, $0.10 per million cache reads and $10 per million output tokens.
+    /// The price in US dollars at Sonnet 5.5's rates, whatever model ran: $2 per million input
+    /// tokens, $2.50 per million cache writes, $0.10 per million cache reads and $10 per million
+    /// output tokens.
     fn cost_usd(&self) -> f64 {
         let dollars = self.input_tokens as f64 * 2.0
             + self.cache_write_tokens as f64 * 2.5
@@ -66,7 +67,7 @@ impl std::fmt::Display for Usage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} requests, {} input tokens ({} cache writes, {} cache reads), {} output tokens, ${:.4}",
+            "{} requests, {} input tokens, {} cache writes, {} cache reads, {} output tokens, ${:.4}",
             self.requests,
             self.input_tokens,
             self.cache_write_tokens,
