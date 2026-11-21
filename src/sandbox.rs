@@ -559,17 +559,19 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             }
             dropped.insert(name, value);
         }
-        while !dropped.is_empty() {
-            let text = serde_json::to_string(&dropped).expect("a Map always serializes");
-            let text_chars = text.chars().count();
-            let truncated = truncate_text(&text, text_chars, chars_left).unwrap_or(text);
-            if truncated.chars().count() <= chars_left || kept.is_empty() {
-                call.truncated_args = Some(truncated);
-                break;
+        if !dropped.is_empty() {
+            let mut text_chars = json_chars(&dropped);
+            while text_chars > chars_left
+                && chars_left < truncation_marker(text_chars, text_chars).chars().count()
+                && let Some((name, value, _, used_chars)) = kept.pop()
+            {
+                text_chars += json_chars(&name) + ":".len() + json_chars(&value) + ",".len();
+                chars_left += used_chars;
+                dropped.insert(name, value);
             }
-            let (name, value, _, used_chars) = kept.pop().expect("kept is not empty");
-            chars_left += used_chars;
-            dropped.insert(name, value);
+            let text = serde_json::to_string(&dropped).expect("a Map always serializes");
+            call.truncated_args =
+                Some(truncate_text(&text, text_chars, chars_left).unwrap_or(text));
         }
         call.args = kept
             .into_iter()
@@ -828,12 +830,8 @@ fn truncate_text(text: &str, text_chars: usize, max_chars: usize) -> Option<Stri
     if text_chars <= max_chars {
         return None;
     }
-    let total_count = group_thousands(text_chars);
-    let format_marker = |kept_chars| {
-        let truncated_count = group_thousands(text_chars - kept_chars);
-        format!("[… {truncated_count} of {total_count} characters truncated …]")
-    };
-    let kept_chars = max_chars.saturating_sub(format_marker(0).chars().count());
+    let longest_marker = truncation_marker(text_chars, text_chars);
+    let kept_chars = max_chars.saturating_sub(longest_marker.chars().count());
     let tail_chars = kept_chars / 2;
     let head_end = text
         .char_indices()
@@ -847,7 +845,24 @@ fn truncate_text(text: &str, text_chars: usize, max_chars: usize) -> Option<Stri
         .map_or(text.len(), |(byte, _)| byte);
     let head = &text[..head_end];
     let tail = &text[tail_start..];
-    Some(format!("{head}{}{tail}", format_marker(kept_chars)))
+    let marker = truncation_marker(text_chars - kept_chars, text_chars);
+    Some(format!("{head}{marker}{tail}"))
+}
+
+/// The marker that stands in for `truncated_chars` characters truncated from a text of
+/// `text_chars` characters, such as `[… 60,000 of 100,000 characters truncated …]`.
+fn truncation_marker(truncated_chars: usize, text_chars: usize) -> String {
+    let truncated_count = group_thousands(truncated_chars);
+    let total_count = group_thousands(text_chars);
+    format!("[… {truncated_count} of {total_count} characters truncated …]")
+}
+
+/// How many characters `value`'s JSON text has.
+fn json_chars(value: &impl Serialize) -> usize {
+    serde_json::to_string(value)
+        .expect("a Map, Value or String always serializes")
+        .chars()
+        .count()
 }
 
 /// `number` in digits with a comma between each group of three, such as `100,000`.
