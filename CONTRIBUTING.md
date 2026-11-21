@@ -55,7 +55,7 @@ GHOSTMODE_LIVE_KEY=<your API key> cargo test --locked --test features
 
 `GHOSTMODE_LIVE_MODEL` picks another model than `claude-sonnet-5-5`. The $0.75 stop prices every token at Sonnet 5.5's rates whatever the model, so a pricier model spends more before the run stops.
 
-The scenarios in `tests/features/execute/recorded.feature` replay scripts that a model sent in a live run, copied from the run's log with the host it ran against and the status it got. Each scenario's name gives the model and the date. A recorded script is replaced with a new recording, never edited.
+The scenarios in `tests/features/execute/recorded.feature` replay scripts that a model sent in a live run, copied from the run's log with the host it ran against and the status it got. A host that held its answer until the model polled answers only when told to, before the poll. Each scenario's name gives the model and the date. A recorded script is replaced with a new recording, never edited.
 
 A scenario earns its place by failing when something a caller would notice changes. Check a new scenario against this list before you add it.
 
