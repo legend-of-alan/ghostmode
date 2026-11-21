@@ -9,7 +9,7 @@ use crate::World;
 use crate::test_host::parse_json;
 
 #[then(
-    regex = r"^the MCP definitions are `execute` and `poll`, each with a name, description and inputSchema$"
+    regex = r"^the MCP definitions are `execute` and `poll`, each with a name, description, inputSchema and annotations$"
 )]
 async fn mcp_definitions_are_execute_and_poll(world: &mut World) {
     let definitions = schema::mcp_definitions(world.sandbox_tools().await);
@@ -21,10 +21,18 @@ async fn mcp_definitions_are_execute_and_poll(world: &mut World) {
     for definition in &definitions {
         assert_eq!(
             object_keys(definition),
-            BTreeSet::from(["description", "inputSchema", "name"]),
+            BTreeSet::from(["annotations", "description", "inputSchema", "name"]),
             "{definition}"
         );
         assert!(definition["description"].is_string(), "{definition}");
+    }
+}
+
+#[then(regex = r"^the MCP definitions' annotations are (\{.*\})$")]
+async fn mcp_annotations_are(world: &mut World, expected: String) {
+    let expected = parse_json(&expected);
+    for definition in schema::mcp_definitions(world.sandbox_tools().await) {
+        assert_eq!(definition["annotations"], expected, "{definition}");
     }
 }
 

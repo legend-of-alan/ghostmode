@@ -200,13 +200,14 @@ async fn ask_claude(
 }
 
 /// The tools for the Claude Messages API: `schema::mcp_definitions` with `inputSchema` renamed
-/// to `input_schema`.
+/// to `input_schema` and without `annotations`.
 fn to_claude_tools(host_tools: &[Tool]) -> Vec<Value> {
     let mut definitions = schema::mcp_definitions(host_tools);
     for definition in &mut definitions {
         let definition = definition.as_object_mut().expect("a definition object");
         let input_schema = definition.remove("inputSchema").expect("an inputSchema");
         definition.insert("input_schema".to_owned(), input_schema);
+        definition.remove("annotations");
     }
     definitions
 }
