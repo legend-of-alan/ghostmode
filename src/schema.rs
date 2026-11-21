@@ -6,9 +6,11 @@ use serde_json::{Value, json};
 use crate::host;
 
 /// The two functions the model calls, `execute` then `poll`, in the shape MCP's `tools/list`
-/// answers with: `{"name", "description", "inputSchema"}`. The schemas set
-/// `additionalProperties: false`, and the execute description lists each of `host_tools` whose
-/// id is a Python identifier as a typed, keyword-only Python stub.
+/// answers with: `{"name", "description", "inputSchema", "annotations"}`. Both declare the
+/// annotations `readOnlyHint` false, `destructiveHint` true, `idempotentHint` false and
+/// `openWorldHint` true. The schemas set `additionalProperties: false`, and the execute
+/// description lists each of `host_tools` whose id is a Python identifier as a typed,
+/// keyword-only Python stub.
 pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
     let stubs: Vec<String> = host_tools
         .iter()
@@ -24,6 +26,12 @@ pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
          Python functions, which take keyword arguments only:\n\n{}",
         stubs.join("\n\n")
     );
+    let annotations = json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+    });
     vec![
         json!({
             "name": "execute",
@@ -41,6 +49,7 @@ pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
                 "required": ["code"],
                 "additionalProperties": false,
             },
+            "annotations": annotations,
         }),
         json!({
             "name": "poll",
@@ -53,6 +62,7 @@ pub fn mcp_definitions(host_tools: &[host::Tool]) -> Vec<Value> {
                 "required": ["run_id"],
                 "additionalProperties": false,
             },
+            "annotations": annotations,
         }),
     ]
 }

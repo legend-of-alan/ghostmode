@@ -2,7 +2,8 @@ Feature: The caller hands its model the execute and poll definitions in MCP or O
 
   Scenario: The MCP and OpenAI definitions wrap the same execute and poll
     Given a host whose `search` answers {"hits": []}
-    Then the MCP definitions are `execute` and `poll`, each with a name, description and inputSchema
+    Then the MCP definitions are `execute` and `poll`, each with a name, description, inputSchema and annotations
+    And the MCP definitions' annotations are {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
     And the OpenAI definitions carry the same names, descriptions and schemas
 
   @rmcp
