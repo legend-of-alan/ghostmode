@@ -148,9 +148,10 @@ pub enum Status {
         /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
         /// calls' arguments together stay within `output_chars`. Each argument, in the order of
         /// `args`, gets what is left of the share. The arguments past the share are dropped, and
-        /// `truncated_args` holds their JSON text truncated to what is left. Kept arguments from
-        /// the end of `args` join the dropped ones until that text's marker fits. If no argument
-        /// is kept and the share is smaller than the marker, `truncated_args` is the marker alone.
+        /// the call's JSON gains a `truncated_args` key next to `args`, which holds their JSON
+        /// text truncated to what is left. Kept arguments from the end of `args` join the dropped
+        /// ones until that text's marker fits. If no argument is kept and the share is smaller
+        /// than the marker, `truncated_args` is the marker alone.
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
