@@ -41,14 +41,31 @@ struct Usage {
 }
 
 impl Usage {
-    /// Adds one response's `usage` object.
-    fn add(&mut self, usage: &Value) {
-        let tokens = |key: &str| usage[key].as_u64().unwrap_or(0);
-        self.requests += 1;
-        self.input_tokens += tokens("input_tokens");
-        self.cache_write_tokens += tokens("cache_creation_input_tokens");
-        self.cache_read_tokens += tokens("cache_read_input_tokens");
-        self.output_tokens += tokens("output_tokens");
+    /// One request's tokens from its response's `usage` object, or an error if `usage` lacks
+    /// `input_tokens` or `output_tokens`. A missing cache count is 0.
+    fn parse(usage: &Value) -> Result<Self, String> {
+        let required = |key: &str| {
+            usage[key]
+                .as_u64()
+                .ok_or_else(|| format!("the response's usage has no {key}: {usage}"))
+        };
+        let cache_tokens = |key: &str| usage[key].as_u64().unwrap_or(0);
+        Ok(Self {
+            requests: 1,
+            input_tokens: required("input_tokens")?,
+            cache_write_tokens: cache_tokens("cache_creation_input_tokens"),
+            cache_read_tokens: cache_tokens("cache_read_input_tokens"),
+            output_tokens: required("output_tokens")?,
+        })
+    }
+
+    /// Adds `other`'s requests and tokens to these.
+    fn add(&mut self, other: Usage) {
+        self.requests += other.requests;
+        self.input_tokens += other.input_tokens;
+        self.cache_write_tokens += other.cache_write_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.output_tokens += other.output_tokens;
     }
 
     /// The price in US dollars at Sonnet 5.5's rates, whatever model ran: $2 per million input
@@ -150,8 +167,9 @@ async fn ask_claude(
             "messages": messages,
         });
         let response = post_messages(key, &body)?;
-        usage.add(&response["usage"]);
-        RUN_USAGE.lock().expect("run usage").add(&response["usage"]);
+        let request_usage = Usage::parse(&response["usage"])?;
+        usage.add(request_usage);
+        RUN_USAGE.lock().expect("run usage").add(request_usage);
         let content = response["content"].as_array().cloned().unwrap_or_default();
         match response["stop_reason"].as_str() {
             Some("tool_use") => {

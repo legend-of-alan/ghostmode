@@ -49,7 +49,7 @@ jobs:
         if: steps.ids.outputs.ready == 'true'
         run: cargo test --locked --test features --no-run
 
-      # The access token lasts at most twice the time left on the GitHub JWT, so the exchange runs right before the test step.
+      # The access token lasts at most twice the time left on the GitHub JWT, so the exchange runs in the test step.
       - name: GitHub OIDC token
         id: oidc
         if: steps.ids.outputs.ready == 'true'
@@ -60,8 +60,11 @@ jobs:
             core.setSecret(jwt);
             core.setOutput('jwt', jwt);
 
-      - name: Anthropic access token
+      # The access token stays in this step: it never reaches GITHUB_ENV, a later step or rust-cache's post step.
+      # Workflow commands stop while the tests run, so the model's scripts and replies in the log can't send any.
+      - name: live tasks
         if: steps.ids.outputs.ready == 'true'
+        timeout-minutes: 9
         shell: bash
         env:
           JWT: ${{ steps.oidc.outputs.jwt }}
@@ -88,9 +91,10 @@ jobs:
           token=$(jq -r '.access_token // empty' <<< "$body")
           [ -n "$token" ] || { echo "::error::The token exchange answered no access_token."; exit 1; }
           echo "::add-mask::$token"
-          echo "GHOSTMODE_LIVE_KEY=$token" >> "$GITHUB_ENV"
-
-      - name: live tasks
-        if: steps.ids.outputs.ready == 'true'
-        timeout-minutes: 9
-        run: cargo test --locked --test features
+          resume=$(cat /proc/sys/kernel/random/uuid)
+          echo "::stop-commands::$resume"
+          status=0
+          env -u JWT -u ANTHROPIC_FEDERATION_RULE_ID -u ANTHROPIC_ORGANIZATION_ID -u ANTHROPIC_SERVICE_ACCOUNT_ID -u ANTHROPIC_WORKSPACE_ID \
+            GHOSTMODE_LIVE_KEY="$token" cargo test --locked --test features || status=$?
+          echo "::$resume::"
+          exit "$status"
