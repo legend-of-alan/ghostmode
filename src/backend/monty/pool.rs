@@ -90,6 +90,9 @@ pub struct Suspension {
     config: ReplConfig,
     checkout: Checkout,
     streams: Streams,
+    /// Set once a piece of a print would pass the 10 MiB collect cap, so stdout and stderr stay a
+    /// prefix of what the script printed.
+    print_cap_reached: bool,
 }
 
 impl fmt::Debug for MontyPool {
@@ -111,6 +114,7 @@ impl fmt::Debug for Suspension {
         f.debug_struct("Suspension")
             .field("config", &self.config)
             .field("streams", &self.streams)
+            .field("print_cap_reached", &self.print_cap_reached)
             .finish_non_exhaustive()
     }
 }
@@ -172,7 +176,8 @@ impl MontyPool {
                 }
             };
             let checkout = &mut suspension.checkout;
-            let mut on_print = print_into(&mut suspension.streams);
+            let mut on_print =
+                collect_prints(&mut suspension.streams, &mut suspension.print_cap_reached);
             turn = match event {
                 TurnEvent::Complete(value) => {
                     drop(on_print);
@@ -249,19 +254,21 @@ impl sealed::Backend for MontyPool {
             }
         };
         let mut streams = Streams::default();
+        let mut print_cap_reached = false;
         let turn = checkout
             .feed(
                 code,
                 Vec::new(),
                 Vec::new(),
                 true,
-                &mut print_into(&mut streams),
+                &mut collect_prints(&mut streams, &mut print_cap_reached),
             )
             .await;
         let suspension = Suspension {
             config,
             checkout,
             streams,
+            print_cap_reached,
         };
         self.run(suspension, turn, tools).await
     }
@@ -275,7 +282,8 @@ impl sealed::Backend for MontyPool {
         let answer = value::from_answer(answer)
             .map(ResumeValue::Return)
             .unwrap_or_else(ResumeValue::Error);
-        let mut on_print = print_into(&mut suspension.streams);
+        let mut on_print =
+            collect_prints(&mut suspension.streams, &mut suspension.print_cap_reached);
         let turn = suspension.checkout.resume(answer, &mut on_print).await;
         drop(on_print);
         self.run(suspension, turn, tools).await
@@ -379,12 +387,19 @@ fn to_repl_config(limits: &Limits) -> ReplConfig {
     }
 }
 
-/// A print callback that adds what the script prints to `streams`, and drops a print that would
-/// take them together past 10 MiB.
-fn print_into(streams: &mut Streams) -> impl FnMut(PrintStream, &str) -> PrintFuture + Send + '_ {
+/// A print callback that adds what the script prints to `streams`. The worker sends a print in
+/// pieces, and the first piece that would take both streams together past 10 MiB sets
+/// `print_cap_reached`, so it and every later piece are dropped and the output stays a prefix of
+/// what the script printed.
+fn collect_prints<'out>(
+    streams: &'out mut Streams,
+    print_cap_reached: &'out mut bool,
+) -> impl FnMut(PrintStream, &str) -> PrintFuture + Send + 'out {
     on_print_sync(|stream, text| {
         let printed_bytes = streams.stdout.len() + streams.stderr.len();
-        if printed_bytes + text.len() > DEFAULT_MAX_PRINT_COLLECT_BYTES {
+        *print_cap_reached =
+            *print_cap_reached || printed_bytes + text.len() > DEFAULT_MAX_PRINT_COLLECT_BYTES;
+        if *print_cap_reached {
             return;
         }
         match stream {

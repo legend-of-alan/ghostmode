@@ -45,3 +45,20 @@ Feature: A status keeps the head and tail of output over budget, and carries wha
       | an arg over the share             | 2                 | search(**{"k" * 250: "v"})                         | [{"tool_id": "search", "args": {}, "truncated_args": "{\\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk[… 95 of 258 characters truncated …]kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\\":\\"v\\"}"}] |
       | a share smaller than the marker   | 20                | search(**{"k" * 250: "v"})                         | [{"tool_id": "search", "args": {}, "truncated_args": "[… 258 of 258 characters truncated …]"}] |
       | as many calls as the limit allows | 2                 | search(query="a" * 1000); search(query="b" * 1000) | [{"tool_id": "search", "args": {"query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[… 846 of 1,000 characters truncated …]aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, {"tool_id": "search", "args": {"query": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb[… 846 of 1,000 characters truncated …]bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}] |
+
+  @monty
+  Scenario: A print past the 10 MiB collect cap fails the run in process and keeps the prints before it
+    Given a sandbox whose `output_chars` is 20000000
+    When the model executes print("a" * 10485660); print("b" * 200)
+    Then the status is failed with an error naming MemoryError
+    And the status's stdout is 10485660 "a" characters and a newline
+
+  @monty-pool
+  Scenario: The pool keeps output up to the 10 MiB collect cap and drops every print after it
+    Given a host whose `search` answers {"hits": []}
+    And a sandbox whose `output_chars` is 20000000
+    When the model executes print("a" * 10485000); search(query="a"); print("b" * 16384); print("after"); 1
+    Then the status is finished
+    And the status's stdout is at most 10485760 bytes
+    And the status's stdout starts with 10485000 "a" characters and a newline
+    And the status's stdout doesn't contain "after"
