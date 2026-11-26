@@ -8,13 +8,16 @@ use futures_timer::Delay;
 use futures_util::future::{self, BoxFuture, Either, FutureExt};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha2::Sha256;
 use tracing::field::{self, Empty};
 use tracing::{Instrument, Span};
 
 use crate::backend::{Backend, Ending, Progress, Streams};
 use crate::host::{self, Host, Tool};
+
+mod output;
+use self::output::{split_budget, to_text, truncate_text};
 
 /// One Python session that runs the model's scripts in backend `B`, and the host whose tools
 /// they call. Globals persist from one `execute` to the next, and one run is in flight at a time.
@@ -144,7 +147,7 @@ pub enum Status {
         /// What went wrong, such as the script's traceback.
         error: String,
         /// Every tool call the host answered in the run, refused and failed ones too. Each
-        /// call's arguments, names included, are truncated to the call's share of
+        /// call's arguments, args included, are truncated to the call's share of
         /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
         /// calls' arguments together stay within `output_chars`. Each argument, in the order of
         /// `args`, gets what is left of the share. The arguments past the share are dropped, and
@@ -528,53 +531,6 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
     }
 
-    /// `call` with its arguments truncated by the rule on [`Status::Failed`]'s `calls`.
-    fn truncate_args(&self, mut call: host::Call) -> host::Call {
-        let limits = &self.builder.limits;
-        let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
-        let mut kept = Vec::new();
-        let mut dropped = Map::new();
-        for (arg, value) in mem::take(&mut call.args) {
-            let arg_chars = arg.chars().count();
-            if dropped.is_empty()
-                && let Some(value_share) = chars_left.checked_sub(arg_chars)
-            {
-                let text = to_text(&value);
-                let text_chars = text.chars().count();
-                let truncated = truncate_text(&text, text_chars, value_share);
-                drop(text);
-                let value_chars = truncated
-                    .as_ref()
-                    .map_or(text_chars, |text| text.chars().count());
-                if value_chars <= value_share {
-                    chars_left = value_share - value_chars;
-                    kept.push((arg, value, truncated, arg_chars + value_chars));
-                    continue;
-                }
-            }
-            dropped.insert(arg, value);
-        }
-        if !dropped.is_empty() {
-            let mut text_chars = json_chars(&dropped);
-            while text_chars > chars_left
-                && chars_left < truncation_marker(text_chars, text_chars).chars().count()
-                && let Some((arg, value, _, used_chars)) = kept.pop()
-            {
-                text_chars += json_chars(&arg) + ":".len() + json_chars(&value) + ",".len();
-                chars_left += used_chars;
-                dropped.insert(arg, value);
-            }
-            let text = serde_json::to_string(&dropped).expect("a Map always serializes");
-            call.truncated_args =
-                Some(truncate_text(&text, text_chars, chars_left).unwrap_or(text));
-        }
-        call.args = kept
-            .into_iter()
-            .map(|(arg, value, truncated, _)| (arg, truncated.map_or(value, Value::String)))
-            .collect();
-        call
-    }
-
     /// Sends `call`, made by the last run, to the host and traces its answer in a `call` span
     /// with no parent. The answer is `None` if the call timeout passes first.
     fn call_host(
@@ -806,82 +762,6 @@ impl Status {
             Self::Failed { .. } => "failed",
         }
     }
-}
-
-/// The text that `value` is measured by against [`Limits::output_chars`], and truncated when it
-/// doesn't fit: a string's own text, or any other value's JSON text.
-fn to_text(value: &Value) -> Cow<'_, str> {
-    match value {
-        Value::String(text) => Cow::Borrowed(text),
-        other => Cow::Owned(serde_json::to_string(other).expect("a Value always serializes")),
-    }
-}
-
-/// `text`, which is `text_chars` characters long, truncated to its first and last characters
-/// around a marker such as `[… 60,000 of 100,000 characters truncated …]`, up to `max_chars` in
-/// all with the marker, or to the marker alone when `max_chars` is smaller than it. `None` if
-/// `text` already fits in `max_chars`.
-fn truncate_text(text: &str, text_chars: usize, max_chars: usize) -> Option<String> {
-    if text_chars <= max_chars {
-        return None;
-    }
-    let longest_marker = truncation_marker(text_chars, text_chars);
-    let kept_chars = max_chars.saturating_sub(longest_marker.chars().count());
-    let tail_chars = kept_chars / 2;
-    let head_end = text
-        .char_indices()
-        .nth(kept_chars - tail_chars)
-        .map_or(text.len(), |(byte, _)| byte);
-    let tail_start = text
-        .char_indices()
-        .rev()
-        .take(tail_chars)
-        .last()
-        .map_or(text.len(), |(byte, _)| byte);
-    let head = &text[..head_end];
-    let tail = &text[tail_start..];
-    let marker = truncation_marker(text_chars - kept_chars, text_chars);
-    Some(format!("{head}{marker}{tail}"))
-}
-
-/// The marker that stands in for `truncated_chars` characters truncated from a text of
-/// `text_chars` characters, such as `[… 60,000 of 100,000 characters truncated …]`.
-fn truncation_marker(truncated_chars: usize, text_chars: usize) -> String {
-    let truncated_count = group_thousands(truncated_chars);
-    let total_count = group_thousands(text_chars);
-    format!("[… {truncated_count} of {total_count} characters truncated …]")
-}
-
-/// How many characters `value`'s JSON text has.
-fn json_chars(value: &impl Serialize) -> usize {
-    serde_json::to_string(value)
-        .expect("a Map, Value or String always serializes")
-        .chars()
-        .count()
-}
-
-/// `number` in digits with a comma between each group of three, such as `100,000`.
-fn group_thousands(number: usize) -> String {
-    let digits = number.to_string();
-    let mut grouped = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    grouped
-}
-
-/// How many of `budget` characters two texts of `first_chars` and `second_chars` each get, as
-/// `(first_share, second_share)`. Each gets what it needs, and when both need more, they split
-/// the budget evenly, the first taking any odd character.
-fn split_budget(budget: usize, first_chars: usize, second_chars: usize) -> (usize, usize) {
-    let second_share = budget
-        .saturating_sub(first_chars)
-        .max(budget / 2)
-        .min(second_chars);
-    (budget - second_share, second_share)
 }
 
 /// The HMAC-SHA256 of `bytes` under `key`, to finalize as a tag or to check a tag against.
