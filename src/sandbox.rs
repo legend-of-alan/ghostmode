@@ -150,7 +150,7 @@ pub enum Status {
         /// What went wrong, such as the script's traceback.
         error: String,
         /// Every tool call the host answered in the run, refused and failed ones too. Each
-        /// call's arguments, args included, are truncated to the call's share of
+        /// call's arguments, keys and values both counted, are truncated to the call's share of
         /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`, so the
         /// calls' arguments together stay within `output_chars`. Each argument, in the order of
         /// `args`, gets what is left of the share. The arguments past the share are dropped, and
@@ -416,7 +416,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
             } = run;
             let progress = match answer {
                 Some(answer) => {
-                    answered_calls.push(self.truncate_args(call));
+                    answered_calls.push(output::truncate_args(call, &self.builder.limits));
                     Span::current().record("call_count", answered_calls.len());
                     self.builder
                         .backend
