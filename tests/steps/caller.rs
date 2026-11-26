@@ -3,10 +3,6 @@ use futures::FutureExt;
 
 use crate::{Request, World};
 
-/// How many bytes the header takes that starts an unsigned dump: the format version, the
-/// `restarted` byte and the 8-byte last run id.
-const DUMP_HEADER_BYTES: usize = 10;
-
 #[given(regex = r#"^a sandbox whose signing key is "([A-Z])"$"#)]
 fn sandbox_signing_key(world: &mut World, letter: char) {
     world.signing_key = Some([letter as u8; 32]);
@@ -88,10 +84,10 @@ async fn restore_dump_with_byte_flipped(world: &mut World, position: String) {
     world.restore(&bytes).await;
 }
 
-#[when("the caller restores the dump truncated to its header into a new sandbox")]
-async fn restore_dump_truncated_to_header(world: &mut World) {
+#[when("the caller restores the dump truncated to half its length into a new sandbox")]
+async fn restore_dump_truncated_to_half(world: &mut World) {
     let mut bytes = world.dump.clone().expect("a dump");
-    bytes.truncate(DUMP_HEADER_BYTES);
+    bytes.truncate(bytes.len() / 2);
     world.restore(&bytes).await;
 }
 
