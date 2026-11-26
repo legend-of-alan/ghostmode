@@ -50,6 +50,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x = 1
     And the model executes search(query="a")
     Then the status is failed with an error naming call timeout
+    And answering `search` finds no run waiting
     When the model executes x
     Then the status is {"status": "finished", "value": 1}
 
@@ -60,6 +61,7 @@ Feature: Limits stop a script, and the session keeps its variables
     When the model executes x = 1
     And the model executes search(query="a")
     Then the status is failed with an error naming call timeout
+    And answering `search` finds no run waiting
     When the model executes x
     Then the status is failed with an error naming NameError
     And the status says the session restarted

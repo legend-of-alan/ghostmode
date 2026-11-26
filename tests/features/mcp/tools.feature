@@ -6,6 +6,7 @@ Feature: An MCP client offers its server's tools to scripts
     When the host connects to the MCP server
     And the model executes get_weather(city="Oslo")
     Then the status is {"status": "finished", "value": {"city": "Oslo"}}
+    And the execute description contains "The scenario's get_weather tool."
 
   Scenario: A tool whose name is no Python identifier is called by its id, and its JSON text is parsed
     Given an MCP server whose `1get-weather.v2` answers its arguments as text
