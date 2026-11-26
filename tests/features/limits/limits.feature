@@ -44,7 +44,7 @@ Feature: Limits stop a script, and the session keeps its variables
     And the failed status lists the calls [{"tool_id": "search", "args": {"query": "a"}}, {"tool_id": "search", "args": {"query": "a"}}, {"tool_id": "search", "args": {"query": "a"}}]
 
   @monty
-  Scenario: A call the host holds past the call timeout fails, and the session runs on
+  Scenario: A call the host holds past the call timeout is dropped and fails, and the session runs on
     Given a host whose `search` answers only when told to
     And a sandbox whose `call_timeout` is 50 ms
     When the model executes x = 1
@@ -55,7 +55,7 @@ Feature: Limits stop a script, and the session keeps its variables
     Then the status is {"status": "finished", "value": 1}
 
   @monty-pool
-  Scenario: A call the host holds past the call timeout fails, and the worker ends with the session's globals
+  Scenario: A call the host holds past the call timeout is dropped and fails, and the worker ends with the session's globals
     Given a host whose `search` answers only when told to
     And a sandbox whose `call_timeout` is 50 ms
     When the model executes x = 1

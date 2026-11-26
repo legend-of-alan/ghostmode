@@ -1,7 +1,7 @@
 @rmcp
 Feature: An MCP client offers its server's tools to scripts
 
-  Scenario: A tool's structured content comes back as the script's value
+  Scenario: A tool's description reaches the model, and its structured content comes back as the script's value
     Given an MCP server whose `get_weather` answers its arguments as structured content
     When the host connects to the MCP server
     And the model executes get_weather(city="Oslo")
