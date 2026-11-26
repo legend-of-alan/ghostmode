@@ -30,8 +30,8 @@ pub(crate) enum Answer {
 /// A host whose tools answer as the scenario's Given steps set up.
 #[derive(Clone, Default)]
 pub(crate) struct TestHost {
-    /// Each tool's answer, by tool id.
-    pub(crate) answers: HashMap<String, Answer>,
+    /// Each tool's answer, by tool id, the one map that every clone of this host shares.
+    answers: Arc<Mutex<HashMap<String, Answer>>>,
     /// The sending halves that answer `Answer::Held` calls by tool id, from a When step to the
     /// call's future.
     pub(crate) held_calls: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
@@ -49,7 +49,8 @@ pub(crate) struct TestHost {
 
 impl Host for TestHost {
     fn tools(&self) -> Vec<host::Tool> {
-        let tools = self.answers.keys().map(|id| {
+        let answers = self.answers.lock().expect("answers");
+        let tools = answers.keys().map(|id| {
             let description = self
                 .descriptions
                 .get(id)
@@ -70,7 +71,13 @@ impl Host for TestHost {
     }
 
     fn call(&self, call: &host::Call) -> BoxFuture<'static, Result<Value, host::Error>> {
-        let Some(answer) = self.answers.get(&call.tool_id).cloned() else {
+        let answer = self
+            .answers
+            .lock()
+            .expect("answers")
+            .get(&call.tool_id)
+            .cloned();
+        let Some(answer) = answer else {
             let mcp_client = self
                 .mcp_client
                 .as_ref()
@@ -108,6 +115,22 @@ impl Host for TestHost {
     }
 }
 
+impl TestHost {
+    /// Makes the host list `tool_id` and answer its calls with `answer`.
+    fn set_answer(&self, tool_id: String, answer: Answer) {
+        self.answers
+            .lock()
+            .expect("answers")
+            .insert(tool_id, answer);
+    }
+
+    /// Makes the host list `tool_id`, answering `null`, unless it already lists it.
+    fn add_tool_if_missing(&self, tool_id: String) {
+        let mut answers = self.answers.lock().expect("answers");
+        answers.entry(tool_id).or_insert(Answer::Value(Value::Null));
+    }
+}
+
 /// The JSON a step wrote.
 pub(crate) fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|err| panic!("{text} is not JSON: {err}"))
@@ -115,39 +138,35 @@ pub(crate) fn parse_json(text: &str) -> Value {
 
 #[given(regex = r"^a host whose `([^`]+)` answers a list nested (\d+) levels$")]
 fn host_answers_nested_list(world: &mut World, tool_id: String, depth: usize) {
-    world
-        .host
-        .answers
-        .insert(tool_id, Answer::NestedList(depth));
+    world.host.set_answer(tool_id, Answer::NestedList(depth));
 }
 
 #[given(regex = r#"^a host whose `([^`]+)` answers ([\[{"].*)$"#)]
 fn host_answers(world: &mut World, tool_id: String, answer: String) {
     world
         .host
-        .answers
-        .insert(tool_id, Answer::Value(parse_json(&answer)));
+        .set_answer(tool_id, Answer::Value(parse_json(&answer)));
 }
 
 #[given(regex = r#"^a host that refuses `(\w+)` with "(.*)"$"#)]
 fn host_refuses(world: &mut World, tool_id: String, reason: String) {
-    world.host.answers.insert(tool_id, Answer::Refused(reason));
+    world.host.set_answer(tool_id, Answer::Refused(reason));
 }
 
 #[given(regex = r#"^a host whose `(\w+)` fails with "(.*)"$"#)]
 fn host_fails(world: &mut World, tool_id: String, message: String) {
-    world.host.answers.insert(tool_id, Answer::Failed(message));
+    world.host.set_answer(tool_id, Answer::Failed(message));
 }
 
 #[given(regex = r"^a host whose `(\w+)` answers only when told to$")]
 fn host_holds(world: &mut World, tool_id: String) {
-    world.host.answers.insert(tool_id, Answer::Held);
+    world.host.set_answer(tool_id, Answer::Held);
 }
 
 #[given(regex = r"^a host whose `(\w+)` holds its answer (\{.*\}) until the model polls$")]
 fn host_holds_until_poll(world: &mut World, tool_id: String, answer: String) {
     let host = &mut world.host;
-    host.answers.insert(tool_id.clone(), Answer::Held);
+    host.set_answer(tool_id.clone(), Answer::Held);
     host.answers_on_poll.insert(tool_id, parse_json(&answer));
 }
 
@@ -155,7 +174,7 @@ fn host_holds_until_poll(world: &mut World, tool_id: String, answer: String) {
 fn host_needs_arg(world: &mut World, tool_id: String, arg: String, answer: String) {
     let value = parse_json(&answer);
     let answer = Answer::ValueIfGiven { arg, value };
-    world.host.answers.insert(tool_id, answer);
+    world.host.set_answer(tool_id, answer);
 }
 
 #[given(
@@ -174,18 +193,13 @@ fn host_answers_log(world: &mut World, tool_id: String, chars: usize, middle_lin
     log.push_str(&format!("{middle_line}\n"));
     push_lines_until(&mut log, chars);
     log.truncate(chars);
-    world
-        .host
-        .answers
-        .insert(tool_id, Answer::Value(log.into()));
+    world.host.set_answer(tool_id, Answer::Value(log.into()));
 }
 
 #[given(regex = r"^a host whose `(\w+)` input schema is (\{.*\})$")]
 fn host_input_schema(world: &mut World, tool_id: String, input_schema: String) {
     let host = &mut world.host;
-    host.answers
-        .entry(tool_id.clone())
-        .or_insert(Answer::Value(Value::Null));
+    host.add_tool_if_missing(tool_id.clone());
     host.input_schemas
         .insert(tool_id, parse_json(&input_schema));
 }
@@ -193,9 +207,7 @@ fn host_input_schema(world: &mut World, tool_id: String, input_schema: String) {
 #[given(regex = r#"^a host whose `(\w+)` description is "(.*)"$"#)]
 fn host_description(world: &mut World, tool_id: String, description: String) {
     let host = &mut world.host;
-    host.answers
-        .entry(tool_id.clone())
-        .or_insert(Answer::Value(Value::Null));
+    host.add_tool_if_missing(tool_id.clone());
     host.descriptions.insert(tool_id, description);
 }
 
@@ -211,6 +223,19 @@ fn held_call_answers(world: &mut World, tool_id: String, answer: String) {
     sender
         .send(parse_json(&answer))
         .expect("the run still waits");
+}
+
+#[when(regex = r"^the host begins to list `(\w+)`, which answers (\{.*\})$")]
+async fn host_begins_listing(world: &mut World, tool_id: String, answer: String) {
+    let expected = parse_json(&answer);
+    world
+        .host
+        .set_answer(tool_id.clone(), Answer::Value(expected.clone()));
+    let listed = world.host.tools().iter().any(|tool| tool.id == tool_id);
+    assert!(listed, "the host lists {tool_id}");
+    let call = host::Call::new(tool_id, serde_json::Map::new());
+    let host_answer = world.host.call(&call).await.expect("the host answers");
+    assert_eq!(host_answer, expected);
 }
 
 #[when(regex = r"^the caller calls `(\w+)` on the host$")]
