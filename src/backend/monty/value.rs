@@ -44,9 +44,9 @@ pub(crate) fn to_call(tool_id: String, args: &CallArgs) -> Result<host::Call, Mo
     let mut budget = MAX_JSON_BYTES;
     let args = args
         .kwargs()
-        .map(|(key, value)| {
-            let key = key.as_str().expect("kwargs keys are str").to_string();
-            to_json_at(value, 0, &mut budget).map(|value| (key, value))
+        .map(|(arg, value)| {
+            let arg = arg.as_str().expect("kwargs keys are str").to_string();
+            to_json_at(value, 0, &mut budget).map(|value| (arg, value))
         })
         .collect::<Result<_, _>>()
         .map_err(to_value_error)?;
