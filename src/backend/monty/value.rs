@@ -55,7 +55,7 @@ pub(crate) fn to_call(tool_id: String, args: &CallArgs) -> Result<host::Call, Mo
 
 /// The exception a host's error raises in the script: `PermissionError` for a refusal, and
 /// `RuntimeError` for a failed call.
-pub(crate) fn to_exception(error: host::Error) -> MontyException {
+fn to_exception(error: host::Error) -> MontyException {
     match error {
         host::Error::Refused(reason) => MontyException::new(ExcType::PermissionError, Some(reason)),
         host::Error::Failed(message) => MontyException::new(ExcType::RuntimeError, Some(message)),
