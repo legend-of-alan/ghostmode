@@ -1,23 +1,5 @@
 //! The backend that runs each session's scripts in its own Monty worker process, checked out
 //! from a monty-pool pool. Only this module talks to monty-pool.
-//!
-//! A worker that crashes takes down only itself, never the caller's process. The script's run
-//! fails with an error that says so, and the next status reports `restarted`, with no globals.
-//! The same holds when the sandbox stops a run at a tool call: at
-//! [`Limits::calls_per_execute`], [`Limits::call_timeout`] or [`Limits::idle_timeout`], or with
-//! [`Sandbox::cancel`]. A stopped run ends its worker, and the session's globals with it. A
-//! script that goes past [`Limits::memory_bytes`], which a worker enforces on its whole memory,
-//! often fails with `MemoryError` and leaves its worker running, and later scripts in that
-//! session can keep failing until [`Sandbox::reset`].
-//!
-//! Each session holds one worker from its first script until the session drops, as
-//! [`Sandbox::reset`] and dropping the sandbox do, even while it runs nothing. Dropping a
-//! session ends its worker. The pool runs at most one worker per core, so with that many
-//! sessions holding workers, a new session's first script or a restore waits a few seconds for
-//! one to drop and then fails, saying no worker became available.
-//!
-//! [`Sandbox::cancel`]: crate::Sandbox::cancel
-//! [`Sandbox::reset`]: crate::Sandbox::reset
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,7 +24,12 @@ const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runs each session's scripts in its own worker process from a pool of `monty` workers that
 /// [`WorkerOptions`] describe. Clones share the pool's workers, at most one per core of the
-/// machine's [available parallelism], and each open sandbox that has run a script holds one.
+/// machine's [available parallelism]. Each sandbox's session checks out a worker at its first
+/// script and keeps it, even while it runs nothing, until the session drops. [`Sandbox::reset`]
+/// and dropping the sandbox both drop the session, which ends its worker. With every worker
+/// held, a new session's first script or a restore waits a few seconds for a session to drop and
+/// then fails, saying no worker became available.
+///
 /// Build it, and await every `execute`, `poll`, `cancel`, `dump` and `restore` of its sandboxes,
 /// inside a Tokio multi-thread runtime. Awaiting them outside Tokio panics.
 ///
@@ -57,11 +44,22 @@ const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(5);
 /// # }
 /// ```
 ///
+/// A worker that crashes takes down only itself, never the caller's process. The script's run
+/// fails with an error that says so, and the next status reports `restarted`, with no globals.
+/// The same holds when the sandbox stops a run at a tool call: at
+/// [`Limits::calls_per_execute`], [`Limits::call_timeout`] or [`Limits::idle_timeout`], or with
+/// [`Sandbox::cancel`]. A stopped run ends its worker, and the session's globals with it. A
+/// script that goes past [`Limits::memory_bytes`], which a worker enforces on its whole memory,
+/// often fails with `MemoryError` and leaves its worker running, and later scripts in that
+/// session can keep failing until [`Sandbox::reset`].
+///
 /// The worker runs the script, but the thread that polls `execute` or `poll` still converts
 /// values between JSON and Python and truncates output to [`Limits::output_chars`]. The thread
 /// that polls `Builder::restore` checks a dump's signature.
 ///
 /// [available parallelism]: std::thread::available_parallelism
+/// [`Sandbox::cancel`]: crate::Sandbox::cancel
+/// [`Sandbox::reset`]: crate::Sandbox::reset
 #[derive(Clone)]
 pub struct MontyPool(Arc<Pool>); // repeats module: pairs with Monty, the in-process backend
 

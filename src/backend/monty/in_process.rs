@@ -1,9 +1,5 @@
 //! The backend that runs scripts in Monty inside the caller's process. This is the only module
 //! that calls the `monty` crate.
-//!
-//! In-process Monty is not crash-isolated: a script, or a dump restored without a signing key,
-//! can panic, abort or hang the caller's process. Untrusted scripts belong in `backend::MontyPool`,
-//! which runs each session in a worker process.
 
 use std::{error, fmt, mem};
 
@@ -20,6 +16,10 @@ use crate::host;
 use crate::sandbox::Limits;
 
 /// Runs scripts in a Monty session inside the caller's process.
+///
+/// `Monty` is not crash-isolated: a script, or a dump restored without a signing key, can
+/// panic, abort or hang the caller's process. Untrusted scripts belong in
+/// `backend::MontyPool`, which runs each session in its own worker process.
 ///
 /// Construct with [`Monty::default`].
 #[derive(Clone, Debug, Default)]

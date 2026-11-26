@@ -528,12 +528,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
     }
 
-    /// `call` with its arguments, names included, truncated to its share of
-    /// [`Limits::output_chars`], which is `output_chars / calls_per_execute`. Each argument, in
-    /// the order of `args`, gets what is left of the share. The arguments past the share are
-    /// dropped from `args`, and their JSON text, truncated to what is left, goes in
-    /// `truncated_args`. Kept arguments from the end of `args` join the dropped ones until that
-    /// text's marker fits, or until none is kept and `truncated_args` is the marker alone.
+    /// `call` with its arguments truncated by the rule on [`Status::Failed`]'s `calls`.
     fn truncate_args(&self, mut call: host::Call) -> host::Call {
         let limits = &self.builder.limits;
         let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
