@@ -121,7 +121,10 @@ pub enum Status {
     Finished {
         /// The value as JSON.
         value: Value,
-        /// What the script printed to stdout, if it printed anything there.
+        /// What the script printed to stdout, if it printed anything there. In
+        /// `backend::MontyPool`, a print that would take the script's prints on stdout and stderr
+        /// together past 10 MiB is cut at or before 10 MiB, every later print is dropped, and the
+        /// script keeps running.
         #[serde(skip_serializing_if = "Option::is_none")]
         stdout: Option<String>,
         /// What the script printed to stderr with `print(..., file=sys.stderr)`, if anything.
@@ -155,7 +158,8 @@ pub enum Status {
         calls: Vec<host::Call>,
         /// What the script printed to stdout before the failure, if it printed anything there.
         /// A print that would take the script's prints on stdout and stderr together past
-        /// 10 MiB raises `MemoryError` in the script, or in `backend::MontyPool` is dropped.
+        /// 10 MiB raises `MemoryError` in the script, and only the prints before it are kept. In
+        /// `backend::MontyPool` that print is cut instead, as `Finished`'s `stdout` says.
         #[serde(skip_serializing_if = "Option::is_none")]
         stdout: Option<String>,
         /// What the script printed to stderr with `print(..., file=sys.stderr)` before the

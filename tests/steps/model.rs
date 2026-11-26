@@ -59,3 +59,39 @@ fn stream_text_is(world: &mut World, stream: String, text: String) {
 fn status_says_restarted(world: &mut World) {
     assert_eq!(world.status["restarted"], true, "{}", world.status);
 }
+
+#[then("the status is finished")]
+fn status_is_finished(world: &mut World) {
+    assert_eq!(world.status["status"], "finished", "{}", world.status);
+}
+
+#[then(regex = r#"^the status's stdout (is|starts with) (\d+) "(.)" characters and a newline$"#)]
+fn stdout_matches_repeated_line(
+    world: &mut World,
+    comparison: String,
+    char_count: usize,
+    character: char,
+) {
+    let stdout = stdout_text(world);
+    let expected = format!("{}\n", character.to_string().repeat(char_count));
+    let matches = match comparison.as_str() {
+        "is" => stdout == expected,
+        _ => stdout.starts_with(&expected),
+    };
+    assert!(matches, "stdout is {} characters", stdout.chars().count());
+}
+
+#[then(regex = r"^the status's stdout is at most (\d+) bytes$")]
+fn stdout_is_at_most(world: &mut World, max_bytes: usize) {
+    let byte_count = stdout_text(world).len();
+    assert!(byte_count <= max_bytes, "stdout is {byte_count} bytes");
+}
+
+#[then(regex = r#"^the status's stdout doesn't contain "(.+)"$"#)]
+fn stdout_does_not_contain(world: &mut World, text: String) {
+    assert!(!stdout_text(world).contains(&text));
+}
+
+fn stdout_text(world: &World) -> &str {
+    world.status["stdout"].as_str().expect("stdout text")
+}
