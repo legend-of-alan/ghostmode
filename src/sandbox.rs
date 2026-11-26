@@ -539,10 +539,10 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         let mut chars_left = limits.output_chars / limits.calls_per_execute.max(1);
         let mut kept = Vec::new();
         let mut dropped = Map::new();
-        for (name, value) in mem::take(&mut call.args) {
-            let name_chars = name.chars().count();
+        for (arg, value) in mem::take(&mut call.args) {
+            let arg_chars = arg.chars().count();
             if dropped.is_empty()
-                && let Some(value_share) = chars_left.checked_sub(name_chars)
+                && let Some(value_share) = chars_left.checked_sub(arg_chars)
             {
                 let text = to_text(&value);
                 let text_chars = text.chars().count();
@@ -553,21 +553,21 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
                     .map_or(text_chars, |text| text.chars().count());
                 if value_chars <= value_share {
                     chars_left = value_share - value_chars;
-                    kept.push((name, value, truncated, name_chars + value_chars));
+                    kept.push((arg, value, truncated, arg_chars + value_chars));
                     continue;
                 }
             }
-            dropped.insert(name, value);
+            dropped.insert(arg, value);
         }
         if !dropped.is_empty() {
             let mut text_chars = json_chars(&dropped);
             while text_chars > chars_left
                 && chars_left < truncation_marker(text_chars, text_chars).chars().count()
-                && let Some((name, value, _, used_chars)) = kept.pop()
+                && let Some((arg, value, _, used_chars)) = kept.pop()
             {
-                text_chars += json_chars(&name) + ":".len() + json_chars(&value) + ",".len();
+                text_chars += json_chars(&arg) + ":".len() + json_chars(&value) + ",".len();
                 chars_left += used_chars;
-                dropped.insert(name, value);
+                dropped.insert(arg, value);
             }
             let text = serde_json::to_string(&dropped).expect("a Map always serializes");
             call.truncated_args =
@@ -575,7 +575,7 @@ impl<H: Host, B: Backend> Sandbox<H, B> {
         }
         call.args = kept
             .into_iter()
-            .map(|(name, value, truncated, _)| (name, truncated.map_or(value, Value::String)))
+            .map(|(arg, value, truncated, _)| (arg, truncated.map_or(value, Value::String)))
             .collect();
         call
     }

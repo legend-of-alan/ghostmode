@@ -162,21 +162,23 @@ impl MontyPool {
     /// `backend::Monty` answers it. What the script prints is added to the suspension's streams.
     async fn run(
         &self,
-        mut script: Suspension,
+        mut suspension: Suspension,
         mut turn: Result<TurnEvent, PoolError>,
         tools: &[host::Tool],
     ) -> Progress<Self> {
         loop {
             let event = match turn {
                 Ok(event) => event,
-                Err(error) => return Progress::Ended(script.into_ending(Err(error.to_string()))),
+                Err(error) => {
+                    return Progress::Ended(suspension.into_ending(Err(error.to_string())));
+                }
             };
-            let checkout = &mut script.checkout;
-            let mut on_print = print_into(&mut script.streams);
+            let checkout = &mut suspension.checkout;
+            let mut on_print = print_into(&mut suspension.streams);
             turn = match event {
                 TurnEvent::Complete(value) => {
                     drop(on_print);
-                    return Progress::Ended(script.into_ending(value::to_json(value.as_ref())));
+                    return Progress::Ended(suspension.into_ending(value::to_json(value.as_ref())));
                 }
                 TurnEvent::FunctionCall {
                     function_name,
@@ -186,10 +188,7 @@ impl MontyPool {
                     match value::to_call(function_name, &args) {
                         Ok(call) => {
                             drop(on_print);
-                            return Progress::Call {
-                                call,
-                                suspension: script,
-                            };
+                            return Progress::Call { call, suspension };
                         }
                         Err(error) => checkout.resume(ResumeValue::Error(error), &mut on_print),
                     }
@@ -210,7 +209,9 @@ impl MontyPool {
                 TurnEvent::ResolveFutures { .. } => {
                     drop(on_print);
                     let message = super::TOOLS_NOT_AWAITABLE.to_string();
-                    return Progress::Ended(sealed::Backend::abort(self, script, message).await);
+                    return Progress::Ended(
+                        sealed::Backend::abort(self, suspension, message).await,
+                    );
                 }
             };
         }
@@ -259,12 +260,12 @@ impl sealed::Backend for MontyPool {
                 &mut print_into(&mut streams),
             )
             .await;
-        let script = Suspension {
+        let suspension = Suspension {
             config,
             checkout,
             streams,
         };
-        self.run(script, turn, tools).await
+        self.run(suspension, turn, tools).await
     }
 
     async fn resume(
